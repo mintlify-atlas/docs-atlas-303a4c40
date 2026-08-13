@@ -1,5 +1,5 @@
 ---
-title: "Package and Install a Plugin as a dsh Bundle"
+title: "Packaging and Installing a DeepSeek Harness Plugin Bundle"
 sidebarTitle: "Packaging & Installing"
 description: "Package your DeepSeek Harness plugin as an installable bundle, install it into a profile with dsh plugin add, and understand the layer composition order."
 ---
@@ -167,10 +167,6 @@ If you would rather not ask users for the allowance, distribute built artifacts 
 
 - **Publish to npm** with the `lib/` directory built at `pnpm publish` time. Users run `dsh plugin add your-package` and receive prebuilt code.
 - **Ship a tarball** from `pnpm pack`. Users run `dsh plugin add ./hello-plugin-0.1.0.tgz`.
-
-<Note>
-  To make your plugin discoverable by the community, add the `dsh-plugin` topic to your GitHub repository. This makes it findable by anyone searching for DeepSeek Harness plugins.
-</Note>
 
 ## Next Steps
 

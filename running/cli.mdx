@@ -1,5 +1,5 @@
 ---
-title: "Run dsh from the Command Line"
+title: "Run DeepSeek Harness Agents via the dsh Command Line"
 sidebarTitle: "CLI Reference"
 description: "Use the dsh CLI to boot profiles, run one-shot headless agents, and manage plugins. Covers all entry modes, flags, and profile composition."
 ---
@@ -16,9 +16,9 @@ The `dsh` command is the product launcher for DeepSeek Harness profiles. It load
 
 | Command | Purpose |
 |---|---|
-| `dsh --profile <name>` | Boot the named profile from `$DSH_HOME/profiles/<name>`. |
+| `dsh --profile <name>` | Boot the named profile under `$DSH_HOME/profiles/<name>`. |
 | `dsh --profile headless "job"` | Run one fresh persisted session, print the final answer, and exit. |
-| `dsh web` | Alias for `--profile web`. Starts the browser-based Web UI. |
+| `dsh web` | Alias of `--profile web`. |
 | `dsh plugin --profile <name> <pnpm args>` | Manage a profile's plugins by forwarding to pnpm in the profile directory. |
 
 The `web` and `headless` profiles auto-initialize on first use from shipped templates. Any other profile must first be created through `dsh plugin`.

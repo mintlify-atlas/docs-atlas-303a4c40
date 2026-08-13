@@ -1,7 +1,7 @@
 ---
 title: "LLM Streaming: Messages, Content Blocks, and Adapters"
 sidebarTitle: "LLM Streaming"
-description: "The conversation and streaming types shared by every DeepSeek Harness model request: Message, ContentBlock variants, StreamChunk protocol, and the LlmAdapter contract."
+description: "DeepSeek Harness streaming types: Message, ContentBlock variants, StreamChunk protocol, TokenUsage, and the LlmAdapter contract every adapter must satisfy."
 ---
 
 The conversation and streaming types come from [`packages/llm`](https://github.com/deepseek-ai/deepseek-harness/tree/main/packages/llm): the `Message`/`ContentBlock` variants every request and durable history share, the fully assembled model request, the raw `StreamChunk` protocol, the adapter contract every adapter must implement, and the shared assembler. The core packages hold and log these values on every turn; this page declares them.

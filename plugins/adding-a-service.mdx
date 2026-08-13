@@ -1,7 +1,7 @@
 ---
 title: "Design a Three-Role Capability Seam in DeepSeek Harness"
 sidebarTitle: "Adding a Service"
-description: "Build a complete capability seam with Service Definition, Service Provider, and Consumer packages. Follow the Bash capability pattern used throughout DeepSeek Harness."
+description: "Build a capability seam with Service Definition, Service Provider, and Consumer packages. Follows the Bash capability pattern used in DeepSeek Harness."
 ---
 
 When a capability is general enough to need replaceable providers — such as Bash execution, filesystem access, or session persistence — DeepSeek Harness separates the capability into three distinct roles. This three-role pattern gives you swappable backends without changing the tool or the consumers that depend on it.

@@ -1,7 +1,7 @@
 ---
-title: "Plugin Lifecycle and Fiber State Machine"
+title: "Plugin Lifecycle: Fiber States and Automatic Cleanup"
 sidebarTitle: "Plugin Lifecycle"
-description: "Understand how DeepSeek Harness loads, activates, and disposes Cordis plugins. Learn the fiber state machine, dependency-driven loading, and automatic cleanup."
+description: "How DeepSeek Harness loads, activates, and disposes Cordis plugins: fiber state machine, dependency-driven loading, and automatic registration cleanup."
 ---
 
 Every Cordis plugin loaded by dsh runs inside a **Fiber** — a runtime scope that tracks the plugin's state, owns its registrations, and coordinates cleanup. Understanding the fiber lifecycle lets you reason about when your plugin's `apply` runs, what happens when a dependency disappears, and how hot replacement works without leaving stale registrations behind.
@@ -25,55 +25,25 @@ ACTIVE → UNLOADING → DISPOSED
 | `UNLOADING` | The plugin is unloading and disposing resources |
 | `DISPOSED` | The plugin is fully unloaded |
 
-A plugin stays `PENDING` indefinitely if a service it declares in `inject` is not yet provided — there is no timeout and no error. This is by design: the dependency graph drives loading, not file order in `cordis.yml`. If your plugin prints nothing and you expect output, check that all of its required services are present in the composition.
-
 ## Dependency-Driven Loading
 
-Declare required services in `inject`. Cordis holds the plugin in `PENDING` until every listed service is available, then moves it to `LOADING` and calls `apply`:
+A plugin with `inject` waits for every required service before loading:
 
-```ts
+```ts ignore-check
 export const inject = ['tools', 'llm']
 
 export function apply(ctx: Context) {
-  // ctx.tools and ctx.llm are guaranteed ready here.
-  ctx.tools.register(/* ... */)
+  // ctx.tools and ctx.llm are ready here.
 }
 ```
 
-Load order in `cordis.yml` does not matter — swap the provider and consumer rows and you get the same result. A plugin with `inject = ['tools', 'llm']` will never run before both services exist, regardless of declaration order.
-
-**Dependencies are tracked after load, not just at startup.** If a required service disappears while the application is running — for example because its provider plugin was unloaded or hot-replaced — every dependent plugin is automatically disposed (`ACTIVE → DISPOSED`) and reloaded when the service returns. This prevents a running consumer from retaining a reference to a service that no longer exists.
-
-```ts
-// If the 'shell' provider is swapped at runtime, this plugin
-// automatically restarts against the new implementation.
-export const inject = ['shell']
-
-export function apply(ctx: Context) {
-  ctx.shell.run({ command: 'echo hello' })
-}
-```
-
-For capabilities the plugin can live without, skip `inject` and probe at the call site with `ctx.get()`:
-
-```ts
-export function apply(ctx: Context) {
-  // Returns undefined when no provider is loaded; the plugin still runs.
-  const metrics = ctx.get('metrics')
-  metrics?.record('plugin_loaded', 1)
-}
-```
+If a required service disappears, for example during provider replacement, the plugin unloads automatically (`ACTIVE → DISPOSED`) and loads again when the service returns.
 
 ## Automatic Cleanup
 
-Every registration made through `ctx` is undone when the plugin unloads. The framework tracks and automatically disposes all of the following:
+Every registration made through `ctx` is undone when the plugin unloads:
 
-- `ctx.on(event, handler)` — event listener removed on unload
-- `ctx.tools.register(tool)` — tool registration removed on unload
-- `ctx.llm.registerAdapter(names, adapter)` — LLM adapter registration removed on unload
-- `ctx.effect(() => cleanup)` — custom resource, cleanup called on unload
-
-```ts
+```ts ignore-check
 export function apply(ctx: Context) {
   // Event listener: removed automatically on unload.
   ctx.on('some-event', handler)
@@ -86,75 +56,19 @@ export function apply(ctx: Context) {
 }
 ```
 
-For any resource Cordis does not already manage — a timer, a database connection, a file watcher — wrap it in `ctx.effect()` and return a disposer:
+The framework tracks and disposes all of these operations:
+- `ctx.on(event, handler)` — event listener
+- `ctx.tools.register(tool)` — tool registration
+- `ctx.llm.registerAdapter(names, adapter)` — LLM adapter registration
+- `ctx.effect(() => cleanup)` — custom resource
 
-```ts
-export function apply(ctx: Context) {
-  ctx.effect(() => {
-    const timer = setInterval(() => console.log('tick'), 1000)
-    return () => clearInterval(timer)
-  })
-}
-```
-
-**Disposal ordering:** Disposers start in reverse registration order, but multiple async disposers run concurrently with no serial completion guarantee. If teardown steps must happen in sequence, keep them in a single `ctx.effect()` and `await` them there:
-
-```ts
-ctx.effect(() => {
-  const db = openDatabase()
-  const cache = openCache(db)
-  return async () => {
-    await cache.flush()  // Runs first.
-    await db.close()     // Runs second.
-  }
-})
-```
-
-## Service Registration
-
-A plugin exposes a service by extending `Service` and passing the service key to `super()`. The framework mounts the instance at `ctx.<key>` and removes it when the plugin unloads.
-
-```ts
-import { Service, type Context } from '@deepseek-ai/cordis'
-
-declare module '@deepseek-ai/cordis' {
-  interface Context {
-    metrics: MetricsService
-  }
-}
-
-export default class MetricsService extends Service {
-  static inject = ['llm']  // A service may depend on other services.
-
-  constructor(ctx: Context) {
-    super(ctx, 'metrics')  // 'metrics' is the ctx key.
-  }
-
-  record(event: string, value: number) {
-    // ...
-  }
-}
-```
-
-The `declare module` block is TypeScript declaration merging — it adds `metrics` to the `Context` interface so `ctx.metrics` type-checks everywhere. It generates no runtime code; without it the service still works at runtime, but consumers lose type safety.
-
-After the provider loads, any plugin that injects `'metrics'` can call it directly:
-
-```ts
-export const inject = ['metrics']
-
-export function apply(ctx: Context) {
-  ctx.metrics.record('tool_call', 1)
-}
-```
-
-Service names live in a flat namespace per application. Prefix your own services distinctively — the harness claims plain names like `tools`, `llm`, and `sessions`.
+During unload, disposer invocation starts in reverse registration order, but multiple async disposers run concurrently and have no serial completion guarantee. Put order-dependent cleanup in one disposer returned from a single `ctx.effect()` and await its steps serially there.
 
 ## Nested Contexts
 
-`ctx.plugin()` creates a child Fiber that inherits the parent context but has an independent lifecycle. The child is disposed automatically when its parent unloads:
+`ctx.plugin()` creates a child Fiber that inherits the parent context but has an independent lifecycle:
 
-```ts
+```ts ignore-check
 export function apply(ctx: Context) {
   // Register a child plugin.
   ctx.plugin(childPlugin)
@@ -163,7 +77,9 @@ export function apply(ctx: Context) {
 }
 ```
 
-`ctx.plugin()` returns the child fiber, which can be disposed early:
+## Dispose Semantics
+
+To stop a plugin instance early:
 
 ```ts
 import type { Context } from '@deepseek-ai/cordis'
@@ -178,7 +94,6 @@ await fiber.dispose()
 ```
 
 `dispose` guarantees:
-
 1. All registrations owned by the plugin are removed.
 2. Child plugins are recursively unloaded.
 3. The returned promise resolves after all asynchronous cleanup finishes.
@@ -187,15 +102,15 @@ await fiber.dispose()
 
 With `@deepseek-ai/cordis-plugin-hmr` loaded from `cordis.yml`, editing a plugin source file triggers:
 
-1. Unload the old plugin and clean up all of its registrations.
+1. Unload the old plugin and clean up its registrations.
 2. Load the new code.
 3. Run the new `apply`.
 
-Because plugin registrations clean themselves up through effects, hot replacement does not retain registrations from the old instance. This is why `ctx.effect()` discipline matters: a resource acquired outside of an effect would survive the unload and leak into the next load.
+Because plugin registrations clean themselves up, hot replacement does not retain registrations from the old instance.
 
 ## Example Lifecycle
 
-```ts
+```ts ignore-check
 export function apply(ctx: Context) {
   console.log('plugin loading')
 
@@ -207,14 +122,12 @@ export function apply(ctx: Context) {
 ```
 
 Loading prints:
-
 ```
 plugin loading
 effect registered
 ```
 
 Unloading prints:
-
 ```
 effect cleaned up
 ```

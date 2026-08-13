@@ -1,7 +1,7 @@
 ---
 title: "Run AI Agents from Python with DeepSeek Harness SDK"
 sidebarTitle: "Python SDK"
-description: "Install the deepseek-harness Python SDK and run agent tasks programmatically. The SDK drives a bundled Node.js runtime over JSON-RPC without requiring a system Node.js install."
+description: "Install deepseek-harness-sdk and run dsh agent tasks from Python. The SDK drives a bundled runtime over JSON-RPC on stdio with no system Node.js required."
 ---
 
 The DeepSeek Harness Python SDK is the programmatic alternative to the Web UI. It drives `dsh` as a managed subprocess, communicating over newline-delimited JSON-RPC on stdio. Installing `deepseek-harness-sdk` from PyPI automatically installs a matching `deepseek-harness-runtime-bin` platform wheel, so the SDK bundles its own runtime and **requires no system Node.js installation**.
@@ -11,6 +11,7 @@ The DeepSeek Harness Python SDK is the programmatic alternative to the Web UI. I
 Before installing the SDK, confirm you have the following:
 
 - **Python 3.10 or newer**
+- **Git**
 - One of the supported platforms: Linux x64, Linux arm64, or macOS 14 or newer on arm64
 - A DeepSeek-compatible API key
 - An isolated workspace directory that the agent is permitted to modify
@@ -19,9 +20,11 @@ Before installing the SDK, confirm you have the following:
 
 <Steps>
   <Step title="Install the SDK">
-    Create a virtual environment and install `deepseek-harness-sdk` from PyPI. This also installs the same-version bundled runtime binary:
+    Clone the repository for its runnable example, create a virtual environment inside it, and install `deepseek-harness-sdk` from PyPI. This also installs the same-version bundled runtime binary:
 
     ```sh
+    git clone https://github.com/deepseek-ai/deepseek-harness.git
+    cd deepseek-harness
     python -m venv .venv
     . .venv/bin/activate
     python -m pip install deepseek-harness-sdk
@@ -40,12 +43,9 @@ Before installing the SDK, confirm you have the following:
   </Step>
 
   <Step title="Run the example script">
-    Clone the repository to access its checked-in example composition, then run a task against an isolated workspace:
+    Run one task against an isolated workspace and session directory:
 
     ```sh
-    git clone https://github.com/deepseek-ai/deepseek-harness.git
-    cd deepseek-harness
-
     python examples/jsonrpc-agent/minimal.py \
       --workspace /absolute/path/to/workspace \
       --session-root /absolute/path/to/sessions \

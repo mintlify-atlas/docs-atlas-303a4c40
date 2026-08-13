@@ -1,7 +1,7 @@
 ---
-title: "Connect a New LLM Provider to DeepSeek Harness"
+title: "Connect a New LLM Provider to DeepSeek Harness (dsh)"
 sidebarTitle: "Adding an LLM Adapter"
-description: "Implement the LlmAdapter streaming contract to connect any model provider to DeepSeek Harness. Covers registration, protocol obligations, and error handling."
+description: "Implement the LlmAdapter streaming contract to connect any model provider to DeepSeek Harness. Covers registration, protocol obligations, and errors."
 ---
 
 DeepSeek Harness uses an adapter pattern to connect model providers: each provider is a plugin that subclasses `LlmAdapter`, implements the `stream()` generator, and registers itself with `ctx.llm.registerAdapter`. The rest of the system (the agent loop, compaction, token metering) consumes the provider-neutral `ctx.llm` service without knowing which provider is active.
@@ -19,7 +19,7 @@ class MyAdapter extends LlmAdapter {
 
 export const name = 'llm-myprovider'
 export const inject = ['llm']
-export const Config = z.object({ apiKey: z.string(), … })
+export const Config: z<Config> = z.object({ apiKey: z.string(), … })
 
 export function apply(ctx: Context, config: Config) {
   ctx.llm.registerAdapter(['my-provider'], new MyAdapter(…))

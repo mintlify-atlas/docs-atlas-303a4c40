@@ -1,7 +1,7 @@
 ---
-title: "Patch Plugin Configuration with cordis.patch.yml"
+title: "Using cordis.patch.yml to Patch DeepSeek Harness Plugins"
 sidebarTitle: "cordis.yml"
-description: "Use cordis.patch.yml overlays to insert, override, or disable plugins in your DeepSeek Harness deployment. Covers patch syntax, --patch overlays, and environment variable interpolation."
+description: "Target plugin rows by ID in cordis.patch.yml to override config, insert entries, or disable plugins in DeepSeek Harness. Includes !!js and --patch usage."
 ---
 
 `cordis.patch.yml` is the user-controlled configuration layer in DeepSeek Harness. Rather than editing bundle-owned configuration directly, you write a patch file that targets specific plugin rows by ID and replaces or extends them. This keeps your customizations separate from the shipped configuration and survives bundle updates.

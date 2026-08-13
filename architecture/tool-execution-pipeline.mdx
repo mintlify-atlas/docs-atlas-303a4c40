@@ -1,7 +1,7 @@
 ---
-title: "Tool Execution Pipeline in DeepSeek Harness"
+title: "DeepSeek Harness Tool Execution Pipeline Explained"
 sidebarTitle: "Tool Pipeline"
-description: "How tool calls flow through the DeepSeek Harness execution pipeline: from model request through pre-execute policy, dispatch, post-execute transformation, and result observation."
+description: "How tool calls flow through DeepSeek Harness: pre-execute policy and guards, dispatch waterfall, post-execute transforms, and immutable result observation."
 ---
 
 When a model response contains a tool-call block, that call passes through an ordered pipeline before its result is returned to the model. The pipeline separates concerns cleanly: policy runs first, execution wraps dispatch, transformation runs after, and observation closes the call. No stage needs to know about the others, and each stage hosts an extension point that hooks can target independently.

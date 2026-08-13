@@ -1,7 +1,7 @@
 ---
 title: "DeepSeek Harness Architecture: Everything is a Plugin"
 sidebarTitle: "Overview"
-description: "Understand how DeepSeek Harness composes a plugin tree from profiles and bundles, its core package responsibilities, and where new behavior attaches in the system."
+description: "How DeepSeek Harness composes a plugin tree from profiles and bundles, the seven core packages, and where new behavior attaches in the system."
 ---
 
 DeepSeek Harness (dsh) is an open-source, plugin-first AI agent framework. Every part of the product — model adapter, tool registry, session log, and agent loop — is a plugin mounted on a shared context. Because all parts are plugins, all parts are replaceable from configuration: there is no privileged core to patch.

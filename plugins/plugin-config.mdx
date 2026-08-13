@@ -1,7 +1,7 @@
 ---
-title: "Add Configuration to a DeepSeek Harness Plugin"
+title: "Plugin Configuration in DeepSeek Harness with Schemastery"
 sidebarTitle: "Plugin Config"
-description: "Make your plugin configurable using Cordis schema declarations. Users set values in cordis.yml; the framework validates and injects config into your apply function."
+description: "Make your plugin configurable with Schemastery schemas. Users set values in cordis.yml and the framework validates and injects the config into apply."
 ---
 
 Hard-coded values belong in configuration, not in source code. DeepSeek Harness uses [Schemastery](https://github.com/shigma/schemastery) — the schema library built into Cordis — to declare a plugin's accepted configuration, validate user-supplied values, fill in defaults, and inject the result as a second argument to `apply`. This tutorial extends the `greet-tool` plugin from [Building a Tool](/plugins/building-a-tool) to make its greeting prefix configurable.
@@ -116,7 +116,7 @@ DeepSeek Harness requires **anything that two deployments may want to set differ
 // Wrong: hardcoded timeout.
 const TIMEOUT = 30000
 
-// Correct: configurable with a sensible default.
+// Correct: configurable.
 export interface Config {
   timeoutMs: number  // Defaults to 30000.
 }

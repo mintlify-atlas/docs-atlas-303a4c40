@@ -1,5 +1,5 @@
 ---
-title: "DeepSeek Harness Glossary of Domain Terms"
+title: "DeepSeek Harness Glossary: Canonical Domain Vocabulary"
 sidebarTitle: "Glossary"
 description: "Canonical definitions for DeepSeek Harness domain vocabulary: capability seams, agent scope, goal, loop hierarchy, Ralph, sessions, turns, and steps."
 ---
@@ -11,12 +11,6 @@ DeepSeek Harness uses one canonical term per concept. Terms are grouped by domai
 <Accordion title="capability-seam">
 
 - **seam** — a *swappable capability* with three roles: a **Service Definition** (the Cordis `Service` that owns its `ctx.<key>` and vocabulary types — an abstract class such as `ShellExecutor`, or a concrete registry such as `WebRuntime`, never a TypeScript `interface`), one or more **Service Providers**, and one or more **Consumers** that inject the service. `packages/shell` is the canonical example: `dsh-shell` (Service Definition), `dsh-bash-local` / `dsh-bash-sandbox` (providers), and `dsh-tool-bash` (Consumer). Roles normally occupy separate packages when they evolve independently, but a package may own multiple roles when they are one concern (`dsh-llm` owns its Service Definition and Consumer). The seam is the complete capability, never one role; reserve the term for that meaning and name a constituent by its role, class, service, contract, or extension point.
-
-- **service definition** — the Cordis `Service` that owns `ctx.<key>` and the vocabulary types for a capability. An abstract class such as `ShellExecutor` or a concrete registry such as `WebRuntime`. Never a TypeScript `interface`.
-
-- **service provider** — one or more packages that implement and register a Service Definition. For example, `dsh-bash-local` and `dsh-bash-sandbox` are both providers of `dsh-shell`'s `ShellExecutor` service.
-
-- **consumer** — a package that `inject`s a service key (e.g. `ctx.shell`) without owning the implementation. For example, `dsh-tool-bash` is the consumer of `ctx.shell`.
 
 </Accordion>
 

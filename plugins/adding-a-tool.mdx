@@ -1,7 +1,7 @@
 ---
-title: "Tool Authoring Reference for DeepSeek Harness"
+title: "Tool Authoring Reference for DeepSeek Harness (dsh)"
 sidebarTitle: "Adding a Tool"
-description: "Reference guide for writing model-facing tools in DeepSeek Harness. Covers defineTool, typed schemas, canonical outputs, the execute() contract, and UI card presentation."
+description: "Reference for writing model-facing tools in DeepSeek Harness. Covers defineTool, typed schemas, execute() contract, and UI card presentation."
 ---
 
 This page covers the full contract a model-facing tool must satisfy in DeepSeek Harness (dsh): the minimal plugin shape, the rules governing `execute()`, long-running work patterns, execution policy extension points, Code Mode integration, and UI card presentation. For an ordered first-tool walkthrough, follow the [Build a tool tutorial](/plugins/building-a-tool). The production-grade reference implementation is `packages/shell/tool-bash`.
@@ -107,9 +107,9 @@ Both methods return a **`card`-tagged render intent**. Pick the card kind that m
 **`presentResult(args, { content, isError, meta? })`** returns the completed card:
 - `generic` — supply an optional title and content.
 - `terminal` — supply raw output and optional exit metadata; each UI renders its capable or fallback view.
-- `diff` — supply applied hunks, often derived by `output.presentationMeta` and carried in persisted `result.meta` so replay reproduces the diff view correctly.
-- `search` — supply a discovery result reconstructed from persisted `result.meta`: grouped-by-file matches (`shape: 'matches'`, grep) or a flat path list (`shape: 'paths'`, glob), plus `truncated`/`total` so a UI never presents a capped result as complete.
-- `web` — supply a completed web retrieval, discriminated by `kind: 'search' | 'fetch'`, derived from `result.meta`.
+- `diff` — supply applied hunks, often derived by `output.presentationMeta` and carried in persisted `result.meta` so replay reproduces them. Mutation tools keep a diff result because the completed view replaces the pending card.
+- `search` — supply a discovery result reconstructed from persisted `result.meta`: grouped-by-file matches (`shape: 'matches'`, grep) or a flat path list (`shape: 'paths'`, glob), plus `truncated`/`total` so a UI never presents a capped result as complete. The view carries no result text (a UI without a search card falls back to the raw result content), and there is no `search` call view — a discovery call's pending state stays a generic card, since matches exist only after `execute`. (tool-fs-search `grep`/`glob`.)
+- `web` — supply a completed web retrieval, discriminated by `kind: 'search' | 'fetch'` (the structured search sources or the fetch summary), derived from `result.meta`; it carries no body copy, so a UI without the `web` capability falls back to the raw result content. (tool-web `web_search`/`web_fetch`.)
 
 **Hard rules for presentation methods:**
 - **Purity.** These run during live streaming AND on session-log replay, so they must be pure functions of `args` (and the result) — no I/O, no reading session state, no clock or random. If you need the file's old content or the working directory inside `presentCall`, that belongs in durable result metadata or the adapter, not the presenter.

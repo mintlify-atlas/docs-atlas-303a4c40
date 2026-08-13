@@ -1,7 +1,7 @@
 ---
 title: "Sandbox and Process Confinement in DeepSeek Harness"
 sidebarTitle: "Sandbox"
-description: "How DeepSeek Harness confines spawned processes with the ctx.sandbox seam. Swap sandbox backends to restrict filesystem access, network calls, and subprocess permissions."
+description: "How DeepSeek Harness confines spawned processes using the ctx.sandbox seam: SandboxMode values, ConfinedArgv, per-call policy, and fail-closed enforcement."
 ---
 
 The process-sandbox seam of [dsh-sandbox](https://github.com/deepseek-ai/deepseek-harness/tree/main/packages/sandbox/sandbox) wraps a same-world subprocess argv in a file-effect policy without coupling consumers to a platform runner. `dsh-sandbox-local` supplies Linux bwrap/Landlock, macOS Seatbelt, and the Windows ACL restricted-token backend; `dsh-bash-sandbox` and `dsh-pwsh-sandbox` consume it. Containers, microVMs, and remote execution are sibling implementations of whole capability seams, not providers of `ctx.sandbox`.
@@ -44,7 +44,7 @@ type SandboxEnforcement = 'full' | 'partial'
 
 ## How Consumers Use It
 
-`ctx.subprocess` wraps argv before spawning; consumers use the seam transparently. The complete execution policy is resolved and carried per capability call:
+The complete execution policy is resolved and carried per capability call. It includes `danger-full-access` so a consumer can resolve policy once before deciding whether to bypass confinement:
 
 ```ts
 /**

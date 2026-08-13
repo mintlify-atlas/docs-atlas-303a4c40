@@ -1,7 +1,7 @@
 ---
-title: "The DeepSeek Harness Session Log: Event-Sourced Agent History"
+title: "DeepSeek Harness Session Log: Event-Sourced History"
 sidebarTitle: "Session Log"
-description: "The session log is the append-only source of truth for all agent interactions in DeepSeek Harness. Model history is derived from it; fork, resume, and replay all flow from the same log."
+description: "The append-only event-sourced session log in DeepSeek Harness: model history derivation, SessionEventMap extension, fork, resume, and persistence."
 ---
 
 The session log is the single source of truth for an agent's entire interaction history. A `Session` is an **append-only log** of typed `SessionEvent`s. The LLM message history is *derived* from the log, never stored separately; replay is re-derivation from the same events. Fork, resume, transcripts, telemetry, and persistence all derive from this stream.

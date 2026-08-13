@@ -1,5 +1,5 @@
 ---
-title: "Configure Model Providers in DeepSeek Harness"
+title: "Configure LLM Model Providers for DeepSeek Harness"
 sidebarTitle: "Providers"
 description: "Add and configure LLM providers in DeepSeek Harness: DeepSeek, catalog providers like Anthropic and OpenAI, and custom OpenAI-compatible endpoints."
 ---
@@ -84,7 +84,7 @@ llm-pi-ai:
         - id: second-model
 ```
 
-`defaultInput` is a fallback, not an override. On a catalog provider it only applies to models the catalog does not describe, so it never removes image support from a catalog model that already has it. To restrict a specific catalog model, use `modelOverrides` keyed by model ID:
+`defaultInput` is a fallback, not an override, and defaults to `[text]`. On a catalog provider it only applies to models the catalog does not describe, so it never removes image support from a catalog model that already has it. To restrict a specific catalog model, use `modelOverrides` keyed by model ID:
 
 ```yaml
 llm-pi-ai:
@@ -135,6 +135,6 @@ The full set of supported fields and their defaults is listed in the [plugin con
 |---|---|
 | `MISSING_CREDENTIAL` | Store the provider key through the Models page or supply the referenced environment variable. |
 | `UNKNOWN_MODEL` | Select a configured model or add the missing model to the custom provider. |
-| Fetch available models returns 401 | Check the API key. Model discovery calls `GET /models`; enter models manually for endpoints that don't provide it. |
-| An image is refused before sending | The model declares no image modality. Add `input: [text, image]` to the model entry in `settings.yaml`. |
-| The provider rejects a request carrying an image | The model claims image support but the endpoint doesn't serve it. Remove `image` from the model's `input` or the route's `defaultInput`, then start a new session. |
+| Fetching available models returns 401 | Check the API key. Model discovery calls the OpenAI-compatible `GET /models` endpoint; enter models manually for endpoints that do not provide it. |
+| An image is refused before sending | The model declares no image modality. Add `input: [text, image]` to the model entry in `settings.yaml`. Note: DeepSeek's own chat-completions route is text-only and cannot be configured otherwise. |
+| The provider rejects a request carrying an image | The model declares images its endpoint does not actually serve. Remove `image` from whichever list granted it—the model's `input` or the route's `defaultInput`—then start a new session: the attached image stays in the session log, so the same request repeats until the session moves off it. |

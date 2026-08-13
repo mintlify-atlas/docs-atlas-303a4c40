@@ -1,5 +1,5 @@
 ---
-title: "Core Concepts: Plugins, Seams, and the Agent Loop"
+title: "dsh Core Concepts: Plugins, Seams, and the Agent Loop"
 sidebarTitle: "Concepts"
 description: "Learn the foundational ideas behind DeepSeek Harness: the Cordis plugin model, capability seams, profiles and bundles, and how the agent turn flow works."
 ---
@@ -12,8 +12,8 @@ Read this page before diving into any subsystem documentation. It establishes th
 
 Cordis is the plugin framework that powers every part of DeepSeek Harness. Understanding five core ideas is enough to read any harness subsystem page.
 
-**1. A plugin is a module that exports `apply(ctx)`.**
-It can be a plain function with optional `inject` and `name` fields, or a `Service` subclass whose lifecycle Cordis manages. Here is the minimal shape:
+**1. A plugin is an object that implements Service.**
+It can be a function with optional `inject` and `apply(ctx)` fields, or a `Service` subclass whose lifecycle Cordis manages. Here is the minimal shape:
 
 ```ts
 import type { Context } from '@deepseek-ai/cordis'

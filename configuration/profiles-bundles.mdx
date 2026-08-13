@@ -1,7 +1,7 @@
 ---
-title: "Profiles and Bundles: Composing dsh Deployments"
+title: "Composing dsh Deployments with Profiles and Bundles"
 sidebarTitle: "Profiles & Bundles"
-description: "Learn how DeepSeek Harness uses profiles and bundles to compose plugin-tree configurations. Stack layers, create custom profiles, and manage plugins with dsh plugin."
+description: "Learn how dsh profiles and bundles compose plugin-tree configurations in layers. Create custom profiles and manage plugins with the dsh plugin command."
 ---
 
 A running `dsh` instance is a plugin tree assembled at boot from an ordered stack of configuration layers. Rather than a single monolithic config file, DeepSeek Harness uses a two-level composition model—**profiles** and **bundles**—that lets each layer build on the one below it while remaining fully patchable by the layers above.
