@@ -1,0 +1,50 @@
+---
+title: "DeepSeek Harness: Plugin-First AI Agent Framework"
+sidebarTitle: "Introduction"
+description: "DeepSeek Harness is an open-source AI agent harness where every component—model adapters, tool registries, sandbox, and the agent loop—is a swappable Cordis plugin."
+---
+
+DeepSeek Harness (`dsh`) is an open-source agent harness developed by [DeepSeek AI](https://deepseek.com). Its defining architectural principle is simple: **everything is a plugin**. The model adapter, the tool registry, the session log, the sandbox, and the agent loop itself are all Cordis plugins mounted into a shared context tree—which means every one of them is replaceable from configuration, with no privileged core to patch.
+
+This architecture is powered by [Cordis](https://github.com/cordiverse/cordis), a plugin framework whose design is described in [_A Programming Paradigm for Spatiotemporal Composability_](https://github.com/cordiverse/paper). Plugins contribute services, typed events, and reversible effects to a shared context. You extend `dsh` by mounting a plugin alongside the others; when a plugin unloads, its registrations unwind predictably.
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Plugin System" icon="puzzle-piece">
+    Every capability—model adapters, tools, session persistence, sandbox execution—is a Cordis plugin. Plugins declare service dependencies via `inject` and register reversible effects through `ctx.effect()` or `ctx.on()`, making the entire system composable and hot-reloadable.
+  </Card>
+  <Card title="Profiles & Bundles" icon="layer-group">
+    A **profile** is a named composition stored in the Harness home, stacking ordered **bundles** of Cordis config rows. The `web` and `headless` profiles ship as ready-to-use templates. The `dsh-base` bundle is the foundation of every profile, providing model adapters, tools, persistence, sandbox, and credentials.
+  </Card>
+  <Card title="Web UI" icon="browser">
+    Start a full browser-based agent session with a single command: `npx @deepseek-ai/dsh web`. The Web UI is served at `http://127.0.0.1:3080` by default and is provided by the `dsh-web-app` bundle layered on top of `dsh-base`.
+  </Card>
+  <Card title="Headless CLI" icon="terminal">
+    The `dsh-headless` bundle adds a one-shot runner with no server. Run `dsh --profile headless "your task"` to execute a single persisted session, print the final answer, and exit—ideal for scripts and CI pipelines.
+  </Card>
+  <Card title="Python SDK" icon="python">
+    A Python SDK is included for integrating DeepSeek Harness capabilities directly into Python applications and workflows, enabling programmatic control of agent sessions beyond the CLI and Web UI.
+  </Card>
+  <Card title="Capability Seams" icon="arrows-split-up-and-left">
+    A **seam** is a swappable capability with three roles: a Service Definition, a Service Provider, and a Consumer. Swapping one provider (for example, pointing the filesystem and subprocess providers at a remote sandbox) transparently moves Bash, PTY, and LSP together—no provider forks required.
+  </Card>
+</CardGroup>
+
+## Developer Preview
+
+<Warning>
+  DeepSeek Harness is currently in **developer preview** and is iterating rapidly. **There will be compatibility-breaking changes.** APIs, configuration formats, and plugin interfaces should be considered unstable until a stable release is announced.
+</Warning>
+
+Despite its preview status, `dsh` is fully functional for building and exploring plugin-based agent workflows. The team actively monitors community feedback to guide the roadmap.
+
+### Community & Support
+
+- **GitHub Discussions** — Submit feedback, ask questions, and report bugs at [github.com/deepseek-ai/deepseek-harness/discussions](https://github.com/deepseek-ai/deepseek-harness/discussions).
+- **Discord** — Join the [DeepSeek Harness Discord community](https://discord.gg/Ycq5dCaS4) for real-time discussion and support.
+- **Plugin discoverability** — Add the [`dsh-plugin`](https://github.com/topics/dsh-plugin) topic to your plugin repository so the community can find it.
+
+## License
+
+DeepSeek Harness is released under the [MIT License](https://github.com/deepseek-ai/deepseek-harness/blob/main/LICENSE). Third-party dependencies and their licenses are disclosed in `THIRD_PARTY_NOTICES.md`.

@@ -1,0 +1,117 @@
+---
+title: "Cordis Plugin Framework Primer for dsh Developers"
+sidebarTitle: "Cordis Primer"
+description: "Learn the five core Cordis concepts every DeepSeek Harness plugin developer needs: plugins as services, context, dependency injection, typed events, and reversible effects."
+---
+
+Cordis is the vendored plugin framework underneath DeepSeek Harness. Every dsh capability — tools, LLM adapters, shell executors, session persistence — is a Cordis plugin. This primer teaches the Cordis ideas a harness plugin author needs before reading the generated service/event reference on the subsystem pages. The [first plugin tutorial](/plugins/first-plugin) walks the same ideas hands-on.
+
+## Cordis in Five Ideas
+
+1. **A plugin is an object that implements Service.** It can be a function with optional `inject` and `apply(ctx)` fields, or a `Service` subclass whose lifecycle Cordis mounts into the current context.
+
+2. **A context is a repository of services.** A service claims a stable `ctx.<key>` — such as `ctx.tools`, `ctx.llm`, or `ctx.sessions` — from a context. Other plugins find services via key instead of importing a concrete implementation.
+
+3. **Declare service dependency via `inject`.** A plugin that names required services waits until those services exist, so load order is expressed through service requirements rather than manual boot sequencing.
+
+4. **Typed Events for communication.** Services declare event names through TypeScript declaration merging, then dispatch them as `emit`, `waterfall`, `parallel`, or `serial` depending on whether listeners observe, wrap, fan out, or run in order.
+
+5. **Registrations are reversible effects.** Prompt sections, tool schemas, adapters, providers, and listeners are installed through `ctx.effect()` or `ctx.on()` so reload and teardown unwind them predictably.
+
+## Dispatch Modes
+
+Every event has exactly one dispatch mode, and can only be dispatched by the corresponding method. The dispatch mode is part of an event's public contract — new harness events document it with an `@mode` tag so the generated catalog can check declarations against dispatch sites.
+
+| Mode | Awaited? | Dispatch Order | Has Return Value? |
+|---|---|---|---|
+| `emit` | No | Listeners observe in registration order | No |
+| `waterfall` | No | Listeners observe in registration order | Yes |
+| `parallel` | Yes | All listeners observe the event in parallel | No |
+| `serial` | Yes | Listeners observe in registration order | Yes |
+
+Choose the mode that matches the semantics your event needs:
+
+- Use **`emit`** for fire-and-forget notifications where nothing needs to react.
+- Use **`waterfall`** for around-middleware chains where each listener can modify or short-circuit a decision.
+- Use **`parallel`** when all listeners can be driven concurrently and no return value is needed.
+- Use **`serial`** when listeners must run in order and each may return a result.
+
+## Waterfall Semantics
+
+`ctx.waterfall` is around-middleware. A listener receives `(...args, next)`. Call `next()` to delegate the possibly wrapped result to the next listener; return without calling `next()` to short-circuit the chain. Values propagate through `next()`'s return value.
+
+**Cooperative listeners** typically mutate a shared request or decision object and then delegate:
+
+```ts
+ctx.on('tools/pre-execute', async (request, next) => {
+  // Annotate the request, then pass it along.
+  request.metadata.tracedBy = 'my-plugin'
+  return next()
+})
+```
+
+**Short-circuiting listeners** own the decision and return without calling `next()`:
+
+```ts
+ctx.on('tools/pre-execute', async (request, next) => {
+  if (isDenied(request)) {
+    // Own the decision — downstream listeners are skipped.
+    return { denied: true }
+  }
+  return next()
+})
+```
+
+A listener that only annotates or observes must always delegate. Use `prepend: true` only when the listener must run before ordinary registrations:
+
+```ts
+ctx.on('tools/pre-execute', handler, { prepend: true })
+```
+
+## Loader Configuration
+
+`@deepseek-ai/cordis-plugin-include` parses `!!js` YAML tags into expression nodes. The loader interpolates an entry's `config` (after declared injections activate, against that plugin context — `ctx.serviceName`) and its `disabled` field (at every mount decision, against the loader context). The `include` plugin preserves nested row expressions until target activation. Other entry metadata stays literal.
+
+Use the `disabled` field to conditionally exclude a plugin without removing it from the file:
+
+```yaml
+- name: '@deepseek-ai/dsh-bash-sandbox'
+  disabled: !!js ctx.env.SANDBOX_ENABLED !== 'true'
+  config:
+    timeoutMs: 30000
+```
+
+Use overlays when the environment selects plugins — for example, to swap a local provider for a remote one in CI without maintaining two separate config files.
+
+## Practical Rules
+
+**Encapsulate behavior into plugins.** A tool pipeline event belongs to `ctx.tools`, model streaming belongs to `ctx.llm`, and live agent coordination belongs to `ctx.agents`. Prefer events for interception and policy; prefer service methods for direct capability calls.
+
+**Every registration should have a disposer.** Either return one from `ctx.effect()`, or use a Cordis helper that handles it for you:
+
+```ts
+export function apply(ctx: Context) {
+  // ctx.on registers a disposer automatically.
+  ctx.on('some-event', handler)
+
+  // ctx.effect wraps any resource that needs manual cleanup.
+  ctx.effect(() => {
+    const connection = createConnection()
+    return () => connection.close()
+  })
+}
+```
+
+**If teardown order matters, keep related work in one effect** so disposal unwinds in the intended sequence. Multiple async disposers run concurrently with no serial completion guarantee — only disposers within a single `ctx.effect()` can be sequenced by `await`-ing them there.
+
+```ts
+ctx.effect(() => {
+  const db = openDatabase()
+  const cache = openCache(db)
+  return async () => {
+    // Both steps run serially inside this one disposer.
+    await cache.flush()
+    await db.close()
+  }
+})
+```

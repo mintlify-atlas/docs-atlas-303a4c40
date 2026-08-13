@@ -1,0 +1,174 @@
+---
+title: "Core Concepts: Plugins, Seams, and the Agent Loop"
+sidebarTitle: "Concepts"
+description: "Learn the foundational ideas behind DeepSeek Harness: the Cordis plugin model, capability seams, profiles and bundles, and how the agent turn flow works."
+---
+
+Read this page before diving into any subsystem documentation. It establishes the vocabulary and mental model that every other part of the DeepSeek Harness docs assumes. The concepts here are drawn directly from the [architecture documentation](architecture/overview) and the [Cordis primer](plugins/cordis-primer); those pages go deeper once you have the foundations.
+
+---
+
+## Plugins and Cordis
+
+Cordis is the plugin framework that powers every part of DeepSeek Harness. Understanding five core ideas is enough to read any harness subsystem page.
+
+**1. A plugin is a module that exports `apply(ctx)`.**
+It can be a plain function with optional `inject` and `name` fields, or a `Service` subclass whose lifecycle Cordis manages. Here is the minimal shape:
+
+```ts
+import type { Context } from '@deepseek-ai/cordis'
+
+export const name = 'my-plugin'
+
+export function apply(ctx: Context) {
+  // register capabilities here
+}
+```
+
+**2. A context is a repository of services.**
+Each service claims a stable key on the shared context—`ctx.tools`, `ctx.llm`, `ctx.sessions`, and so on. Other plugins locate services by key rather than by importing a concrete implementation. This is what makes every component swappable.
+
+**3. Declare service dependencies via `inject`.**
+A plugin that names required services in its `inject` array waits until those services exist before activating. Load order is expressed through service requirements, not manual boot sequencing:
+
+```ts
+export const inject = ['llm', 'tools']
+
+export function apply(ctx: Context) {
+  // ctx.llm and ctx.tools are guaranteed to exist here
+}
+```
+
+**4. Typed events for communication.**
+Services declare event names through TypeScript declaration merging, then dispatch them as `emit`, `waterfall`, `parallel`, or `serial` depending on whether listeners should observe, wrap, fan out, or run in order. The dispatch mode is part of an event's public contract.
+
+**5. Registrations are reversible effects.**
+Prompt sections, tool schemas, adapters, providers, and event listeners are installed through `ctx.effect()` or `ctx.on()`. When a plugin unloads—whether due to a reload, a config change, or an error—its registrations unwind predictably. There is no privileged core to patch: every contribution can be undone.
+
+<Tip>
+  Because registrations are reversible, you extend `dsh` by mounting a new plugin *beside* the existing ones. You never need to fork or patch the core packages.
+</Tip>
+
+---
+
+## Capability Seams
+
+A **seam** is a swappable capability defined across three roles:
+
+| Role | Responsibility |
+|---|---|
+| **Service Definition** | Declares the interface. A Cordis `Service` that owns its `ctx.<key>` and the associated vocabulary types—for example, an abstract class like `ShellExecutor`. |
+| **Service Provider** | Implements the interface for a specific environment or backend. There can be multiple providers for the same seam. |
+| **Consumer** | Injects the service and uses it—commonly a model-facing tool that calls the capability on behalf of the agent. |
+
+**Example — the Bash seam:**
+
+- `dsh-shell` — **Service Definition**: owns `ctx.shell` and the `ShellExecutor` abstract class.
+- `dsh-bash-local` / `dsh-bash-sandbox` — **Service Providers**: implement `ctx.shell` for local processes and sandboxed environments respectively.
+- `dsh-tool-bash` — **Consumer**: the model-facing Bash tool that calls `ctx.shell` to run commands.
+
+Swapping the provider changes the whole product transparently. Because filesystem and subprocess providers share one execution world, pointing them at a remote sandbox moves Bash, PTY, and LSP together—no provider forks required. Subagent providers vary just as widely behind a single interface, from a fresh child agent to a delegated turn in another product.
+
+<Note>
+  A single role alone is not a seam. Adding a new capability to `dsh` means designing all three roles: definition, provider, and consumer.
+</Note>
+
+---
+
+## Profiles and Bundles
+
+A running `dsh` process is a plugin tree composed at boot from ordered layers.
+
+**Profiles:**
+A **profile** is a named composition stored in the Harness home (`$DSH_HOME/profiles/<name>`). It lists the bundles it stacks, holds any out-of-tree plugins the user has installed, and keeps the user's own `cordis.patch.yml`. The `web` and `headless` profiles ship as templates and auto-initialize on first use.
+
+**Bundles:**
+A **bundle** is a distribution format for Cordis config rows and the code they mount. Whatever a bundle inserts stays patchable by the layers above it. Each bundle declares itself in its `package.json` under a `dsh` field:
+- `dsh.profile` lists a profile's bundles.
+- `dsh.bundle` points at a bundle's patch file.
+
+**Layer order:**
+Layers apply over an empty root in the following order:
+1. Each bundle in the profile's declared order.
+2. The profile's `cordis.patch.yml`.
+3. The home-level `$DSH_HOME/cordis.patch.yml`.
+4. Any `--patch` overlays passed on the command line.
+
+A patch targets a row by ID and replaces its whole config, or inserts new rows.
+
+**`dsh-base`** is the foundation layer of every profile. It provides model adapters, tools, persistence, sandbox and approval policy, settings, credentials, and telemetry. The `dsh-web-app` bundle adds the browser application on top; `dsh-headless` adds the one-shot runner with no server.
+
+<Tip>
+  To inspect the full plugin tree your machine actually boots—before any process starts—run:
+
+  ```sh
+  dsh --profile web --dump-config
+  ```
+
+  Every row it prints can be replaced or extended with your own patch.
+</Tip>
+
+---
+
+## The Agent Turn Flow
+
+The agent loop is itself a Cordis plugin (`core/agent-loop`), which means its behavior can be observed and intercepted at every stage through typed events.
+
+**Vocabulary:**
+- A **step** is one model request plus the tool executions caused by its response.
+- A **turn** is zero or more steps: it opens before its first input is claimed and closes once nothing is owed.
+
+**Turn flow:**
+
+```text
+turn/start
+  claim next-step input plus one queued message
+  assemble prompt sections + tool schemas
+  -> agent/pre-step                   reject | enter(messages)
+     reject, or a first enter rewritten empty -> close the turn with no step
+     step/start
+     append entered messages as user/message
+     derive model history from the log
+     agent/request -> llm/stream -> assistant/chunk* -> assistant/message
+     tool/call* -> tools/pre-execute -> tools/execute -> tools/post-execute -> tool/result*
+     step/end
+     tools owe another request, or next-step input arrived -> claim -> next step
+  -> agent/turn-stopping
+turn/end
+```
+
+**Durable session events vs. live extension points:**
+Events divide into two categories:
+- `turn/*`, `step/*`, `user/message`, `assistant/*`, and `tool/*` are **durable session events**—facts appended to the append-only session log and broadcast through `session/event`. Use these when the fact must survive a reload or session resume.
+- `agent/pre-step`, `agent/request`, `llm/stream`, `tools/pre-execute`, `tools/execute`, `tools/post-execute`, and `agent/turn-stopping` are **live extension points**. `agent/pre-step`, `agent/request`, `llm/stream`, and the three `tools/*` events are waterfalls—listeners must call `next()` to delegate. `agent/turn-stopping` is serial with no `next()`.
+
+`agent/pre-step` is the primary interception point for what the model sees. Listeners may rewrite the claimed messages or reject them entirely. Even a rejected or empty first claim closes a durable turn (recorded in the log), so the log always records the attempt.
+
+---
+
+## The Session Log
+
+The session log is the **single source of truth** for everything the model sees and everything `dsh` persists.
+
+- **Append-only, event-sourced.** New facts are appended as `SessionEvent` entries; nothing is mutated in place.
+- **Model history is derived, never stored separately.** `deriveMessages()` projects the model's message history by replaying the log. Raw `assistant/chunk` events are also logged to preserve replay fidelity and UI streaming.
+- **Model-visible means logged.** Anything that must reach a model request must be reconstructable from the log. A runtime invariant asserts this: if you add a new model-visible input, you must extend `SessionEventMap` and render from the log.
+
+Fork, resume, transcripts, telemetry, and persistence all derive from this single stream. This design means there is no hidden state that a reload or fork can miss.
+
+<Warning>
+  Do not store model-visible state outside the session log. Any information that reaches the model during a request must appear in the log so that session resume, fork, and replay all produce consistent results.
+</Warning>
+
+---
+
+## What's Next
+
+<CardGroup cols={2}>
+  <Card title="Cordis Primer" icon="book-open" href="plugins/cordis-primer">
+    A deeper look at Cordis: dispatch modes, waterfall semantics, loader configuration, and practical rules for plugin authors.
+  </Card>
+  <Card title="Architecture Overview" icon="sitemap" href="architecture/overview">
+    The full architecture documentation: core packages, the capability graph, events map, and extension cookbook.
+  </Card>
+</CardGroup>

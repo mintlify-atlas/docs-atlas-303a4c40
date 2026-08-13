@@ -1,0 +1,207 @@
+---
+title: "Sessions and the SessionEventMap"
+sidebarTitle: "Sessions"
+description: "The in-memory event-sourced session model in DeepSeek Harness: SessionEventMap, append-only log, ctx.sessions API, and how model history is derived."
+---
+
+The in-memory, event-sourced model of [dsh-session](https://github.com/deepseek-ai/deepseek-harness/tree/main/packages/core/session) is the single source of truth for an agent's whole interaction history. A `Session` is an **append-only log** of typed `SessionEvent`s. The LLM message history is *derived* from the log, never stored separately; replay is re-derivation from the same events. How the log is made **durable** (the persistence seam, backends, crash recovery) is a sibling concern covered by the persistence documentation.
+
+## The Session Event Log
+
+A `Session` is an append-only log of typed `SessionEvent`s — the single source of truth for an agent's whole interaction history. The LLM message history is *derived* from the log, never stored separately; replay is re-derivation from the same events.
+
+Each `SessionEvent` is a proper discriminated union over `type`, so `switch (event.type)` narrows `event.data` without casts. `seq` is the monotonic position in the log (`seq = log.length`); `time` is epoch ms.
+
+```ts
+/**
+ * One immutable entry in the session log.
+ *
+ * A proper discriminated union over `type` (not independent `type`/`data`
+ * unions), so `switch (event.type)` narrows `event.data` without casts.
+ */
+type SessionEvent<T extends SessionEventType = SessionEventType> = {
+  [K in SessionEventType]: {
+    type: K
+    /** Monotonic sequence number within the session. */
+    seq: number
+    /** Unix epoch milliseconds. */
+    time: number
+    data: SessionEventMap[K]
+    /**
+     * Marks an event a reader may safely skip when it does not recognize
+     * `type`. Absent means required.
+     */
+    ignorable?: true
+  } & (K extends SurfaceEventType ? {
+    sourceEventSeqs?: number[]
+    surfaceOp?: SurfaceOp
+  } : object)
+}[T]
+```
+
+Because `SessionEventMap` is merge-extensible, switches over `SessionEvent` must **NOT** use `assertNever` — a plugin-added variant is a valid unknown value; handle the known cases and fall through `default`.
+
+## SessionEventMap
+
+The merge-extensible event vocabulary. A plugin declares extra event types via declaration merging. The core event types are:
+
+```ts
+/**
+ * The merge-extensible, append-only source of truth for an agent interaction.
+ * Message history is derived from this log. Every event is lossless JSON and
+ * sequence numbers stay contiguous, including raw chunks.
+ */
+interface SessionEventMap {
+  /**
+   * Opens turn `turn` before the loop claims queued input or runs pre-step.
+   */
+  'turn/start': { turn: number }
+  /**
+   * Closes turn `turn` with the TurnEndReason that ended it.
+   */
+  'turn/end': { turn: number; reason: TurnEndReason }
+  /** Opens step `step` of turn `turn` — one model call plus the tool executions it requested. */
+  'step/start': { turn: number; step: number }
+  /** Closes step `step` of turn `turn`. */
+  'step/end': { turn: number; step: number }
+  /**
+   * A user-role message on the model-visible surface: a direct human prompt,
+   * a synthetic `agent.inject()` context, or an entered goal continuation round.
+   * All three project their `content` verbatim; `source` tells them apart.
+   */
+  'user/message': UserMessage
+  /** Raw stream chunk — token-level replay fidelity. */
+  'assistant/chunk': { turn: number; step: number; chunk: StreamChunk }
+  /**
+   * Assembled assistant message for one step (derived history uses this).
+   * Carries the step's `usage` when the adapter reported token accounting.
+   */
+  'assistant/message': { turn: number; step: number; message: AssistantMessage; usage?: TokenUsage }
+  /**
+   * The model requested one tool invocation: `name` with the raw `arguments`
+   * JSON string exactly as the model produced it (unparsed). `callId` pairs the
+   * call with its `tool/result`.
+   */
+  'tool/call': { turn: number; step: number; callId: CallId; name: string; arguments: string }
+  /**
+   * A completed tool call's model-facing result, optional internal failure
+   * identity, and optional tool-private `meta` presentation payload.
+   */
+  'tool/result': {
+    turn: number
+    step: number
+    message: ToolResultMessage
+    error?: { name: string; code: string }
+    meta?: JsonValue
+  }
+  /** Whole-list snapshot; latest write wins on replay. Log-only UI state; never derived history. */
+  'todo/write': { todos: TodoItem[] }
+  /**
+   * Full header for the next request, appended inside its step before dispatch.
+   * It is log-only; the latest snapshot reconstructs the request header.
+   */
+  'request/header': { header: EpochHeader; reason: RequestHeaderReason }
+  /**
+   * Route metadata for the next request, logged only when the route or capacity changes.
+   */
+  'request/context': RequestContext
+  /**
+   * Marks the end of a constructor seed. Events before it have smaller seq
+   * values and came from the seed (resume, fork, or replay).
+   */
+  'session/end-seed': Record<string, never>
+}
+```
+
+The three message-producing types (`SurfaceEventType` — `user/message`, `assistant/message`, `tool/result`) carry surface metadata declaring how they join the ordered derived surface.
+
+## `ctx.sessions` API
+
+The `ctx.sessions` service is the in-memory session store. Persistence plugins subscribe to `session/event` and flush on `session/flush` / dispose.
+
+```ts
+/**
+ * Create a session owned by the calling fiber: disposing that fiber stops
+ * event notification and removes the session from the store.
+ * `options.seed` populates the session with a copy of those events (replay/fork);
+ * `options.meta` attaches creation metadata.
+ * @param id - the session id; omitted, the store mints `session-<n>`.
+ * @returns the live session, already entered and announced.
+ */
+create(id?: SessionId, options?: CreateSessionOptions): Session
+
+/**
+ * Look up a live session.
+ * @param id - the session id to look up.
+ * @returns the session, or undefined when no live session has that id.
+ */
+get(id: SessionId): Session | undefined
+
+/**
+ * All live sessions, in creation order.
+ * @returns a fresh array; mutating it does not affect the store.
+ */
+list(): Session[]
+
+/**
+ * Create a live child session from a stable prefix of a live source.
+ * `boundary` is an inclusive source event seq; omitted means the source's
+ * current last event. The selected slice may end with a between-turn event
+ * but must not end inside an open turn.
+ */
+fork(source: SessionForkSource, boundary?: number, childSessionId?: SessionId): Session
+
+/**
+ * Dispatch the awaited `session/flush` durability checkpoint for `session`.
+ * @returns whether at least one durability listener participated.
+ */
+async flush(session: Session): Promise<boolean>
+```
+
+The `prepare` / `enter` / `announce` split gives a caller that owns a composite `ctx.effect` (such as the agent factory) the ability to fold the session lifecycle into that one effect so a fiber unload tears the session and agent down in order rather than as racing sibling effects.
+
+## Derived History
+
+`Session.deriveMessages()` projects the event log into the `Message[]` the model sees — **cached** (each surface node projected once, when first seen; a surface rewrite rebuilds) and **frozen** (a fresh array per call over shared, deep-frozen messages, so mutating logged history through a projection is unrepresentable).
+
+The projection rules are applied by `deriveEventMessage(event)` — a public pure function the fold applies — so external reconstructors and the dev invariant project a log prefix with exactly the same rules and cannot disagree with the cache:
+
+- **`user/message`** → a user message carrying exact `content`.
+- **`assistant/message`** → an assistant message with the provider and model that produced it plus optional adapter-private replay state. Raw `assistant/chunk` events are **skipped** in derivation (the assembled message is authoritative). An **empty-content** `assistant/message` is also skipped — a max-tokens step cut off with no content still records an `assistant/message` to hold its usage, provider, and model, but a content-less assistant turn must not enter the provider transcript.
+- **`tool/result`** → a user message carrying a `tool-result` block.
+- **`user/message`** (injected context, i.e. non-`user` source) → a user-role message carrying its `content` verbatim at its chronological position.
+- Everything else (`turn/*`, `step/*`, plugin-owned `llm/retry`) is structural and does not project into a message.
+
+## Extending the Event Map
+
+A plugin may declaration-merge extra `SessionEventMap` types. These are **log-only**: they are NOT `SurfaceEventType`s (they carry no `surfaceOp` and contribute nothing to derived history). Their owner decides whether they belong to an open execution turn or may stand between turns, and enforces any relation in its own invariant companion.
+
+For example, the compaction seam adds `compaction/start` / `compaction/summary` / `compaction/end`. The `@deepseek-ai/dsh-hook-protocol` package adds log-only `hook/invoked` / `hook/result` records for a hook bridge.
+
+```ts
+// Example: a plugin declaration-merges new event types
+declare module '@deepseek-ai/dsh-session' {
+  interface SessionEventMap {
+    'compaction/start': { turn: number; step: number; seq: number }
+    'compaction/summary': { turn: number; step: number; summary: string }
+    'compaction/end': { turn: number; step: number; seq: number }
+  }
+}
+```
+
+When several events in one plugin-owned family assemble into one Web Client Conversation Node, every start, update, result, resource, or interruption event in that family carries or independently derives the same stable business id. This lets the client group each event without guessing from adjacency or scanning history.
+
+## Session Events
+
+The `session/*` events allow plugins to observe session lifecycle:
+
+- **`session/created`** (emit) — Creation announcement during session publication. A synchronous throw vetoes and rolls back.
+- **`session/disposed`** (emit) — Emitted once when an announced session leaves the store.
+- **`session/event`** (emit) — Post-commit, fire-and-forget append feed. Observer failures are logged and contained without making the committed append fail.
+- **`session/flush`** (parallel) — Awaited parallel durability checkpoint: every listener runs and the caller awaits all of them.
+
+All four events support scope-filtered dispatch: agent-scoped listeners receive only sessions or events entered through that agent's context.
+
+## Durability Contract
+
+What a persistence backend relies on: the durable log persists every event losslessly, **including** `assistant/chunk` — `seq` must stay contiguous, so chunks cannot be filtered out of the canonical log. A backend may choose its own storage encoding for an event batch as long as `load` returns the exact appended events. All `event.data` must be JSON-serializable; `Session.append` enforces this at the source (throwing on non-serializable data), so a bad event never enters the log.

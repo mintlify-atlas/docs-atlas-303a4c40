@@ -1,0 +1,126 @@
+---
+title: "The DeepSeek Harness Session Log: Event-Sourced Agent History"
+sidebarTitle: "Session Log"
+description: "The session log is the append-only source of truth for all agent interactions in DeepSeek Harness. Model history is derived from it; fork, resume, and replay all flow from the same log."
+---
+
+The session log is the single source of truth for an agent's entire interaction history. A `Session` is an **append-only log** of typed `SessionEvent`s. The LLM message history is *derived* from the log, never stored separately; replay is re-derivation from the same events. Fork, resume, transcripts, telemetry, and persistence all derive from this stream.
+
+## The Invariant: Model-Visible Means Logged
+
+**Anything that reaches a model request must be reconstructable from the log.** A runtime invariant asserts this. `deriveMessages()` projects model history from the log, and raw `assistant/chunk` events preserve replay and UI fidelity.
+
+This is why a new model-visible input requires a new session event type: you cannot introduce a new category of model-visible content by mutating in-flight state. Instead, extend `SessionEventMap` with a new event type, then render and replay from the log.
+
+<Note>
+`Session.deriveMessages()` projects the event log into the `Message[]` the model sees. It is cached (each surface node projected exactly once; a surface rewrite rebuilds) and frozen (a fresh array per call over shared, deep-frozen messages, so mutating logged history through a projection is unrepresentable). Use `deriveEventMessage(event)` to project a single node with the same rules.
+</Note>
+
+## Session Events vs Live Events
+
+Two categories of event coexist in the system:
+
+**Durable session events** are appended to the append-only log and survive a reload. They are broadcast through `session/event` after each append. These are the facts of record:
+
+| Event type | What it records |
+|---|---|
+| `turn/start` | Opens a turn before the loop claims input |
+| `turn/end` | Closes a turn with its `TurnEndReason` |
+| `step/start` | Opens a step (one model call + tool executions) |
+| `step/end` | Closes a step |
+| `user/message` | A user-role message on the model-visible surface |
+| `assistant/chunk` | Raw stream chunk — token-level replay fidelity |
+| `assistant/message` | Assembled assistant message for one step |
+| `tool/call` | The model requested one tool invocation |
+| `tool/result` | A completed tool call's model-facing result |
+| `todo/write` | Whole-list todo snapshot (last-write-wins) |
+| `request/header` | Full request envelope (call config + system prompt + tool schemas) |
+| `request/context` | Route metadata for the resolved model route |
+| `session/end-seed` | Marks the end of a constructor seed (resume/fork boundary) |
+
+**Live extension point events** are in-flight coordination signals that do not persist. Examples: `agent/pre-step`, `agent/request`, `agent/turn-stopping`, `tools/pre-execute`, `tools/execute`, `tools/post-execute`. These are waterfalls and serial events used to intercept and transform work in flight; they are not replayed on reload.
+
+The key distinction: if a fact must survive a reload, it belongs as a session event. If it is coordination logic for the current run, it belongs as a live event.
+
+## Extending the Session Log
+
+`SessionEventMap` is **merge-extensible**. A plugin declares extra event types via TypeScript declaration merging — no edit to the owning package is needed.
+
+```ts ignore-check
+// Extend the session log with a new event type
+declare module '@deepseek-ai/dsh-session' {
+  interface SessionEventMap {
+    'my-plugin/started': { taskId: string; label: string }
+    'my-plugin/finished': { taskId: string; outcome: string }
+  }
+}
+```
+
+For example, the compaction seam adds `compaction/start`, `compaction/summary`, and `compaction/end` events this way. The hook-protocol package adds `hook/invoked` and `hook/result` records for a hook bridge. These are **log-only** events: they are NOT `SurfaceEventType`s (they carry no `surfaceOp` and contribute nothing to derived model history). Their owner decides whether they belong inside an open execution turn or may stand between turns.
+
+The generated [persistence log event catalog](https://github.com/deepseek-ai/deepseek-harness) enumerates every member — core and merged — with its payload, surface badge, and declaration site.
+
+<Note>
+Because `SessionEventMap` is merge-extensible, a `switch` over `SessionEvent` must NOT use `assertNever` — a plugin-added variant is a valid unknown value. Handle the known cases and fall through `default`.
+</Note>
+
+## Fork and Resume
+
+`ctx.sessions.fork(source, boundary?, childSessionId?)` creates a live child session from a stable prefix of a live source session.
+
+- `source` — a live `Session` object or live `SessionId`.
+- `boundary` — an inclusive source event seq through which to fork; omitted means the source's current last event. The selected slice may end between turns but must not end inside an open turn.
+- `childSessionId` — optional child session id; omitted delegates to the store's id policy.
+
+The fork creates a child session with deep-cloned seed events plus child metadata (`parentSession`, `seedLength`, and inherited `cwd`). An explicit `boundary` lets callers fork from any stable between-turn position, including a previous `turn/end` or a later standalone log-only event, even if the source has newer events or an open current turn.
+
+The API rejects a prefix that ends inside an open turn instead of clipping silently.
+
+**Resume** loads a persisted session first: `ctx.agents.resume(ownerCtx, options)` rehydrates a session from the configured persistence service and resumes the agent on it. The resumed session's constructor seed is its full stored log, while its header keeps the original fork value.
+
+## Surface Events
+
+Three event types produce LLM messages and are called **surface events**:
+
+```ts type-equiv
+/**
+ * The subset of SessionEventType values whose events produce LLM messages
+ * and are eligible to appear on the ordered surface.
+ */
+type SurfaceEventType =
+  | 'user/message'
+  | 'assistant/message'
+  | 'tool/result'
+```
+
+Surface events carry a `surfaceOp` declaring how they join the ordered derived surface:
+
+```ts type-equiv
+/**
+ * How a session event entered the ordered surface.
+ *
+ * - 'append': added to the tail — normal path for user/assistant/tool messages.
+ * - { op: 'replace', start, end }: replaces surface nodes from `start`
+ *   (inclusive) through `end` (inclusive) with this node.
+ */
+type SurfaceOp =
+  | 'append'
+  | { op: 'replace'; start: number; end: number }
+```
+
+`'append'` is the normal tail-append path for ordinary conversation messages. `replace` shadows surface entries from `start` through `end` inclusive and inserts the new event in their place — used by compaction to replace a range of conversation history with a summary.
+
+Every message-producing event must declare how it joins the surface. `Session.append()` enforces this at the call site: `SurfaceEventType` events require a `SurfaceIntent`; non-surface types reject it at compile time.
+
+## Persistence
+
+The session log is stored as **durable JSONL** (or SQLite, via the persistence seam). The `SessionPersistence` interface owns the backend contract; `session-persistence-jsonl` and `session-persistence-sqlite` are the two shipped backends.
+
+Key durability properties:
+
+- Every event is losslessly persisted, **including** `assistant/chunk` — `seq` must stay contiguous, so chunks cannot be filtered out of the canonical log.
+- All `event.data` must be JSON-serializable. `Session.append()` enforces this at the source, throwing on non-serializable data, so a bad event never enters the log.
+- `ctx.sessions.flush(session)` dispatches the awaited `session/flush` durability checkpoint. Consumers that read storage after `whenIdle()` flush themselves.
+- Crash recovery closes any genuinely open trailing turn with reason `interrupted` on reload.
+
+The persistence seam is swappable: a different `ctx.sessionPersistence` provider changes the backend without touching the loop.

@@ -1,0 +1,401 @@
+---
+title: "Plugin Config Catalog: cordis.yml Configuration Reference"
+sidebarTitle: "Config Catalog"
+description: "Every plugin config block available in cordis.yml for DeepSeek Harness. Generated from source; covers all loadable packages and their declared configuration types."
+---
+
+Every `config:` block a `cordis.yml` entry can set: for each loadable harness package, the verbatim config declaration (JSDoc included) its `apply` function or service constructor receives, with every referenced type alongside. The paste is the plugin's full declared config type — a field the runtime schema deliberately excludes is a runtime-only seam and is not settable from `cordis.yml`.
+
+<Note>
+  This catalog is generated from source (`scripts/gen-config-catalog.ts`) and verified fresh by `pnpm run verify-config-catalog` (part of `doc-sync`). A `Requires:` line lists the service keys the plugin `inject`s: its `cordis.yml` tree must also load providers for those services.
+</Note>
+
+## How to Use This Catalog
+
+Each entry in this catalog corresponds to a loadable package. The `config:` fields set in `cordis.yml` configure that plugin when it loads. For example:
+
+```yaml
+plugins:
+  - package: "@deepseek-ai/dsh-acp"
+    config:
+      provider: "deepseek"
+      model: "deepseek-chat"
+```
+
+Every schema-validated key, including nested keys, must be locatable on the declared config type. The generator cross-checks the runtime schemastery schema against the pasted declaration, so the paste cannot hide a loader-accepted field.
+
+<Tip>
+  For the service APIs these config types wire up, see the architecture subsystem pages: [LLM Streaming](/architecture/subsystems/llm-streaming), [Tools](/architecture/subsystems/tools), [Sessions](/architecture/subsystems/sessions), and [Sandbox](/architecture/subsystems/sandbox). For the model-facing tool schemas, see the [Tool Catalog](/reference/tool-catalog).
+</Tip>
+
+---
+
+## `@deepseek-ai/dsh-acp`
+
+**Requires:** `agents`
+
+```ts
+/** Plugin config: the provider/model selection used for each ACP-created agent. */
+export interface AcpConfig {
+  /** Provider route for created agents. */
+  provider?: string
+  /** Model name for created agents. */
+  model?: string
+  /** Runtime-only transport override; production uses stdio. */
+  stream?: Stream
+}
+```
+
+---
+
+## `@deepseek-ai/dsh-agent-default-model`
+
+```ts
+/** Composition entry for the default model selection. */
+export interface Config {
+  /** Registered provider route. */
+  provider: string
+  /** Provider-owned model id. */
+  model: string
+}
+```
+
+---
+
+## `@deepseek-ai/dsh-agent-instructions`
+
+```ts
+/** User-facing workspace instruction loader configuration. */
+export interface Config {
+  /** Harness home containing the fixed user-global `AGENTS.md`; defaults to `$DSH_HOME` or `~/.dsh`. */
+  dshHome?: string
+  /** Directory entries that identify the project root while walking upward from the session cwd. */
+  projectRootMarkers?: string[]
+  /** UTF-8 byte cap for one rendered baseline or dynamic batch; non-positive or non-finite disables loading. */
+  maxBytes: number
+  /** Maximum UTF-8 bytes read from one instruction file; larger files are ignored. */
+  maxSourceBytes?: number
+  /**
+   * Ordered same-directory project candidates; every existing file loads, with
+   * per-directory trimmed-content duplicates collapsed to the earliest candidate.
+   */
+  instructionFileCandidates?: string[]
+  /**
+   * Ordered same-directory local-overlay candidates loaded after the base files
+   * under the same per-directory trimmed-content dedup; empty disables the overlay.
+   */
+  localInstructionFileCandidates?: string[]
+}
+```
+
+---
+
+## `@deepseek-ai/dsh-agent-loop`
+
+**Requires:** `agents` · `sessions` · `llm` · `tools` · `systemPrompt`
+
+```ts
+/** Agent-loop plugin configuration. */
+export interface Config {
+  /**
+   * Maximum parallel-safe calls in flight per agent step. `1` is serial;
+   * omission defaults to DEFAULT_MAX_PARALLEL_TOOL_CALLS.
+   */
+  maxParallelToolCalls?: number
+  /** Agents created or resumed at plugin startup. */
+  agents: (AgentOptions & {
+    /** Stable config label used in logs and as the fresh combined-id prefix. */
+    id: string
+    /** Optional stable identity; remounts resume its materialized history, while first use creates it fresh. */
+    sessionId?: SessionId
+    /** Optional workspace for a fresh session. */
+    cwd?: string
+    /** Persisted session to resume instead of creating a fresh session. */
+    resumeSessionId?: SessionId
+  })[]
+}
+```
+
+---
+
+## `@deepseek-ai/dsh-agent-presets`
+
+**Requires:** `loader`
+
+```ts
+/** Plugin config: which preset is the default, and where presets live. */
+export interface Config {
+  /** Preset id mounted when a caller names none. Missing at mount time fails loud. */
+  default: string
+  /** Scanned roots in precedence order; an earlier root wins a duplicate id. */
+  roots: PresetRoot[]
+  /**
+   * Append the harness home's `USER_PRESET_DIR` as a `user` root, after every
+   * configured root. False mounts a roster over `roots` alone.
+   */
+  includeUserRoot: boolean
+}
+
+/** One directory scanned for preset subdirectories. */
+export interface PresetRoot {
+  /** Directory holding one subdirectory per preset; a leading `~` expands. */
+  path: string
+  /** Trust recorded on every preset discovered under this root. */
+  trust: PresetTrust
+}
+
+/**
+ * Where a preset's composition came from. A `system` preset ships with the
+ * deployment; a `user` preset was authored locally, by a person or by an
+ * agent, and therefore carries the same trust as shell access.
+ */
+export type PresetTrust = 'system' | 'user'
+```
+
+---
+
+## `@deepseek-ai/dsh-agent-tool-presentation`
+
+**Requires:** `tools`
+
+```ts
+/** Plugin config. */
+export interface Config {
+  /**
+   * The form this agent's model sees. `native` sends every visible schema,
+   * `code` sends only `run_code` plus a generated SDK, `both` sends both.
+   * Required rather than defaulted: the deployment default is what a preset
+   * without this row already gets, so an omitted value would mean the row was
+   * composed for nothing.
+   */
+  mode: ToolPresentationMode
+}
+```
+
+---
+
+## `@deepseek-ai/dsh-attachment-local`
+
+```ts
+/** Local attachment backend configuration. */
+export interface Config {
+  /** Explicit harness home; omitted follows `DSH_HOME`, then `~/.dsh`. */
+  dshHome?: string
+  /** Maximum encoded bytes accepted for one image. */
+  maxImageBytes?: number
+  /** Maximum image count accepted in one submitted message. */
+  maxImagesPerMessage?: number
+  /** Maximum aggregate encoded image bytes accepted in one submitted message. */
+  maxMessageImageBytes?: number
+  /** Maximum intrinsic width multiplied by height accepted for one image. */
+  maxImagePixels?: number
+}
+```
+
+---
+
+## `@deepseek-ai/dsh-bash-local`
+
+**Requires:** `subprocess`
+
+```ts
+/** Plugin config (all optional — `static Config` supplies the defaults). */
+export interface Config {
+  /** Default working directory for commands (default: process.cwd()). */
+  cwd?: string
+  /** Default foreground timeout in milliseconds. */
+  timeoutMs?: number
+  /** Upper bound for per-call timeout overrides. */
+  maxTimeoutMs?: number
+  /** Per-stream in-memory output cap; overflow spills to a temp file. */
+  maxOutputBytes?: number
+  /** Per-stream spill-file cap; larger streams retain only their in-memory tail. */
+  maxSpillBytes?: number
+  /** Grace period for kill escalation and inherited pipes; at most `MAX_TIMER_DELAY_MS`. */
+  graceMs?: number
+}
+```
+
+---
+
+## `@deepseek-ai/dsh-bash-sandbox`
+
+**Requires:** `subprocess` · `sandbox` · `sandboxPolicy`
+
+```ts
+/**
+ * Plugin config: the local executor's knobs, verbatim. The sandbox policy —
+ * the default mode and fallback `workspace-write` root — is NOT here: it lives
+ * on `ctx.sandboxPolicy` (`@deepseek-ai/dsh-sandbox-policy`), which resolves
+ * each calling session's mode and cwd for every enforcing capability. The runner
+ * choice is likewise the `ctx.sandbox` provider's config, not this executor's.
+ */
+export type Config = LocalConfig
+```
+
+---
+
+## `@deepseek-ai/dsh-client-connection`
+
+**Requires:** `webServer`
+
+```ts
+/** Plugin config: the deployment's non-loopback serving authorities. */
+export interface ConnectionConfig {
+  /**
+   * Authorities this deployment serves beyond loopback: exact `host:port`, or
+   * port-less `host` matching any port. The /api trust fence refuses any
+   * request whose Host is neither loopback nor listed here, so a
+   * non-loopback (`0.0.0.0`) deployment must declare the names it is reached
+   * by.
+   */
+  trustedHosts?: string[]
+  /** Maximum buffered JSON body for every `/api` request. */
+  maxRequestBodyBytes?: number
+}
+```
+
+---
+
+## `@deepseek-ai/dsh-code-runtime-worker-thread`
+
+```ts
+/** Plugin config: every execution cap, changeable from `cordis.yml` (no hardcoded tunables). */
+export interface Config {
+  /**
+   * Busy-time budget in milliseconds: the run fails with kind `'timeout'`
+   * once the worker's MEASURED event-loop active time exceeds this.
+   * Metering measured busy time is what makes the budget both fair (a program
+   * awaiting a slow tool accrues nothing) and ungameable (a hot loop accrues
+   * whether or not a decoy dispatch is in flight).
+   */
+  computeMs?: number
+  /**
+   * Wall-clock ceiling in milliseconds; never pauses for anything. The
+   * backstop for what busy-time cannot see (a program awaiting a promise
+   * nobody will resolve). At most `2_147_483_647`.
+   */
+  maxWallMs?: number
+  /**
+   * Hard cap for serialized log-array, completion-value, and failure-message payloads;
+   * fixed result-envelope syntax is excluded.
+   */
+  maxOutputBytes?: number
+  /** The worker's max old-generation heap in MiB; overflow kills the worker, surfacing as kind `'worker-exit'`. */
+  maxOldGenerationSizeMb?: number
+}
+```
+
+---
+
+## `@deepseek-ai/dsh-compaction-basic`
+
+**Requires:** `llm` · `tokenMeter` · `sessions`
+
+```ts
+/** Basic compaction configuration with an optional exact-target policy table. */
+export interface BasicCompactionConfig extends CompactionPolicyConfig {
+  /** Exact provider/model overrides; duplicate targets fail plugin load. */
+  modelPolicies?: ModelCompactPolicyConfig[]
+  /** Enable automatic step-boundary pressure and overflow-recovery listeners. Defaults to `true`. */
+  auto?: boolean
+}
+
+/** Policy fields shared by the default policy and exact model overrides. */
+export interface CompactionPolicyConfig {
+  /** Compact at this fraction of the model's context window. Defaults to `0.8`. */
+  thresholdRatio?: number
+  /** Recent context retained as a fraction of the model's window. Defaults to `0.16`. */
+  retainRatio?: number
+  /** Absolute recent-context budget; mutually exclusive with `retainRatio`. */
+  retainTokens?: number
+  /** Summary provider; set together with `summarizationModel`, or inherit the conversation target. */
+  summarizationProvider?: string
+  /** Summary model; set together with `summarizationProvider`, or inherit the conversation target. */
+  summarizationModel?: string
+  /** Provider generation cap for summarization. Defaults to `8192`. */
+  maxTokens?: number
+  /** Extra attempts after the first compaction when pressure remains above threshold. Defaults to `1`. */
+  compactionRetries?: number
+  /** Maximum retries after canonical context overflow; `0` disables recovery. Defaults to `1`. */
+  maxOverflowRetries?: number
+}
+```
+
+---
+
+## `@deepseek-ai/dsh-acp-demo`
+
+```ts
+/**
+ * App config: the swappable per-deployment values. `provider` and `model` configure
+ * each agent the ACP bridge creates at `session/new`; `persistenceRoot` is the JSONL backend's directory.
+ */
+export interface Config {
+  /** Provider route for ACP-created agents. */
+  provider: string
+  /** Model name for ACP-created agents (must have a registered adapter). */
+  model: string
+  /** Bundled agent-loop concurrency cap; `1` is serial and omission uses its default. */
+  maxParallelToolCalls?: number
+  /** Deployment persona (the system-prompt plugin's `persona` config). */
+  persona?: string
+  /** Explicit model-facing tool order (the system-prompt plugin's `toolOrder` config). */
+  toolOrder?: string[]
+  /** Tool-registry config — its presentation `mode`. */
+  tools?: ToolsConfig
+  /** DeepSeek Harness home directory exposed to bash and used for local skill discovery. */
+  dshHome?: string
+  /** Directory for JSONL sessions and the derived query index. Defaults to `./.sessions`. */
+  persistenceRoot?: string
+  /** Write delta-chunk runs as packed storage rows (the JSONL backend's `packChunks`). Defaults to `true`. */
+  packChunks?: boolean
+  /** JSONL artifact encoding; defaults to checksummed Zstandard frames. */
+  persistenceCompression?: JsonlCompression
+  /** Controls automatic AGENTS.md/CLAUDE.md loading; configure a byte budget or set `false`. */
+  workspaceContext: agentCore.Config['workspaceContext']
+  /** Skill registry, local-provider, and model-facing consumer config. */
+  skills?: agentCore.SkillConfig
+  /** Model-facing bash tool config. */
+  toolBash?: NonNullable<agentCore.Config['toolBash']>
+  /** Process-local background-job admission config. */
+  jobs?: NonNullable<agentCore.Config['jobs']>
+  /** Generic background-job controls; set false to omit their tools. */
+  toolJobs?: NonNullable<agentCore.Config['toolJobs']>
+  /** Persisted same-session goals; owner defaults enable them, or false disables the stack and tools. */
+  goals?: agentCore.GoalConfig | false
+}
+```
+
+---
+
+## Cordis.yml Example
+
+A minimal `cordis.yml` wiring the ACP bridge with a DeepSeek provider:
+
+```yaml
+plugins:
+  # LLM adapter — registers the provider route
+  - package: "@deepseek-ai/dsh-deepseek-adapter"
+    config:
+      apiKey: "${DEEPSEEK_API_KEY}"
+
+  # Agent loop — creates the session and drives turns
+  - package: "@deepseek-ai/dsh-agent-loop"
+    config:
+      agents:
+        - id: "main"
+          cwd: "."
+
+  # ACP bridge — sets provider/model for ACP-created agents
+  - package: "@deepseek-ai/dsh-acp"
+    config:
+      provider: "deepseek"
+      model: "deepseek-chat"
+
+  # Bash tool
+  - package: "@deepseek-ai/dsh-tool-bash"
+
+  # Filesystem tools
+  - package: "@deepseek-ai/dsh-tool-fs"
+```

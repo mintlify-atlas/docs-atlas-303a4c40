@@ -1,0 +1,132 @@
+{
+  "projectType": "framework",
+  "projectName": "DeepSeek Harness",
+  "projectDescription": "An open-source, plugin-first AI agent harness where every component—model adapters, tool registries, session logs, and the agent loop—is a swappable Cordis plugin.",
+  "theme": "luma",
+  "primaryColor": "#4c6cfc",
+  "lightColor": null,
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Getting Started",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "concepts"
+            ]
+          },
+          {
+            "group": "Running dsh",
+            "pages": [
+              "running/web-ui",
+              "running/cli",
+              "running/python-sdk"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/providers",
+              "configuration/profiles-bundles",
+              "configuration/cordis-yml"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Plugin Development",
+        "groups": [
+          {
+            "group": "Tutorials",
+            "pages": [
+              "plugins/first-plugin",
+              "plugins/building-a-tool",
+              "plugins/plugin-config",
+              "plugins/packaging-and-installing"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "plugins/cordis-primer",
+              "plugins/plugin-lifecycle",
+              "plugins/capability-seams"
+            ]
+          },
+          {
+            "group": "Extension Guides",
+            "pages": [
+              "plugins/adding-a-tool",
+              "plugins/adding-an-llm-adapter",
+              "plugins/adding-a-service"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Architecture",
+        "groups": [
+          {
+            "group": "System Design",
+            "pages": [
+              "architecture/overview",
+              "architecture/agent-lifecycle",
+              "architecture/session-log",
+              "architecture/tool-execution-pipeline"
+            ]
+          },
+          {
+            "group": "Subsystems",
+            "pages": [
+              "architecture/subsystems/llm-streaming",
+              "architecture/subsystems/tools",
+              "architecture/subsystems/sessions",
+              "architecture/subsystems/sandbox"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "reference/tool-catalog",
+              "reference/config-catalog",
+              "reference/glossary"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Everything is a plugin — model adapters, tool registries, session logs, sandbox, and the agent loop are all swappable Cordis plugins",
+    "Plugin system powered by Cordis with dependency injection, typed events, and reversible effect-based registrations",
+    "Profiles and bundles — composable layered configuration stacks for different deployment shapes (web, headless, custom)",
+    "Web UI for interactive agent sessions with full tool approval flow",
+    "Headless CLI mode for one-shot programmatic agent runs",
+    "Python SDK for driving the harness as a subprocess via JSON-RPC",
+    "Agent Client Protocol (ACP) for automation clients over JSON-RPC stdio",
+    "Capability seams — swappable filesystem, shell, sandbox, subagent, and LLM provider backends",
+    "Event-sourced append-only session log as the single source of truth for model history",
+    "Code Mode — model can call registered tools programmatically via a generated TypeScript SDK"
+  ],
+  "publicApiSurface": [
+    "npx @deepseek-ai/dsh web — start the Web UI",
+    "dsh --profile headless \"task\" — run a one-shot headless agent",
+    "dsh plugin --profile <name> <pnpm args> — manage profile plugins",
+    "ctx.tools.register(defineTool({...})) — register a model-facing tool",
+    "ctx.llm.registerAdapter([provider], adapter) — register an LLM adapter",
+    "ctx.agents — live agent registry with factory and event dispatch",
+    "ctx.sessions — session store with fork/resume/append",
+    "ctx.shell / ctx.subprocess / ctx.fs / ctx.sandbox — capability seam service keys",
+    "agent.followup() / agent.steer() / agent.inject() — drive an agent programmatically",
+    "ctx.on('tools/pre-execute' | 'tools/execute' | 'tools/post-execute', handler) — tool pipeline interception events",
+    "ctx.on('agent/pre-step' | 'agent/request' | 'agent/turn-stopping', handler) — agent loop interception events",
+    "ctx.on('session/event', handler) — subscribe to the durable session event stream",
+    "DeepSeekHarness Python class — high-level Python SDK for running agent tasks",
+    "cordis.patch.yml / --patch overlay — layer-based runtime configuration patching",
+    "export const inject = [...]; export function apply(ctx) — Cordis plugin shape"
+  ]
+}

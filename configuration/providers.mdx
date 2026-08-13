@@ -1,0 +1,140 @@
+---
+title: "Configure Model Providers in DeepSeek Harness"
+sidebarTitle: "Providers"
+description: "Add and configure LLM providers in DeepSeek Harness: DeepSeek, catalog providers like Anthropic and OpenAI, and custom OpenAI-compatible endpoints."
+---
+
+Model providers are configured through the **Settings → Models** page in the Web UI, or directly in `$DSH_HOME/settings.yaml` for advanced cases. Changes to provider configuration—adding models, updating URLs, changing credentials—take effect on the next request without restarting the server.
+
+<Note>
+  Model changes take effect on the next request. You do not need to restart `dsh` after adding a provider or editing a model list.
+</Note>
+
+## Configure DeepSeek
+
+Open **Settings → Models**. The DeepSeek card exposes a single API key field. Enter your key and save it.
+
+Keys are write-only: after saving, the page receives a redacted descriptor and never shows the literal secret again. The key itself is stored in `$DSH_HOME/.credentials.yaml`; the settings document retains only a credential reference—not the raw value.
+
+## Add a Catalog Provider
+
+Click **Add provider** to choose from the built-in catalog. Select a provider, enter its API key, and save. The catalog supplies the endpoint, wire protocol, and model list automatically—no base URL or protocol selection is required.
+
+Supported catalog providers include:
+
+- **Anthropic**
+- **OpenAI**
+- **Amazon Bedrock**
+- **Google Vertex AI**
+- **Azure OpenAI**
+- **Codex**
+
+Some catalog providers use native authentication rather than a plain API key. Bedrock requires AWS credentials and a region; Vertex AI requires an ADC project; Azure requires an `api-version`; Codex uses OAuth. Filling only the API key field does not configure these providers—supply the credentials their platform requires.
+
+## Add a Custom Provider
+
+Click **Add a custom provider** to configure a company gateway, a self-hosted model server, or any provider absent from the installed catalog. The form requires:
+
+- **Provider ID** — a lowercase identifier used internally
+- **Display name** — the human-readable label shown in the UI
+- **Base URL** — the endpoint root (e.g., `https://gateway.example/v1`)
+- **API protocol** — the wire format the endpoint speaks (e.g., `openai-completions`)
+- **Credential** — the API key or credential reference for this endpoint
+- **Models** — at least one model entry
+
+Under **Model catalog**, click **Fetch available models** to query the base URL and credential currently shown in the form. Selecting candidates from the result populates the draft model list; the provider is not saved until you click **Save**. Catalog providers use their installed catalog and do not make a network request during this step.
+
+<Warning>
+  The **Provider ID is permanent**. Requests, saved sessions, model defaults, and credential references all use it as a key. To rename a provider, add a new provider with the desired ID and delete the old one. The display name, base URL, protocol, credential, and model list remain editable at any time.
+</Warning>
+
+### Image Input
+
+A model entered by hand is treated as text-only unless it explicitly declares image support. Attaching an image to an undeclared model is refused before the request is sent, with an error naming the model.
+
+The custom provider form has no image-input field. To enable image input for a specific model, add the `input` field to that model's entry in `$DSH_HOME/settings.yaml`:
+
+```yaml
+llm-pi-ai:
+  providers:
+    my-gateway:
+      apiKeyEnv: GATEWAY_API_KEY
+      api: openai-completions
+      baseURL: https://gateway.example/v1
+      models:
+        - id: legacy-chat
+        - id: vision-preview
+          input: [text, image]
+```
+
+`input` accepts `text` and `image` and applies to that model alone. Omitting `input` (or writing an empty list) keeps whatever the installed catalog records for that model, falling back to the route's `defaultInput` for models the catalog does not describe.
+
+If every model on a custom provider accepts images, set a route-level fallback with `defaultInput` instead of annotating each model individually:
+
+```yaml
+llm-pi-ai:
+  providers:
+    vision-gateway:
+      apiKeyEnv: GATEWAY_API_KEY
+      api: openai-completions
+      baseURL: https://vision.example/v1
+      defaultInput: [text, image]
+      models:
+        - id: first-model
+        - id: second-model
+```
+
+`defaultInput` is a fallback, not an override. On a catalog provider it only applies to models the catalog does not describe, so it never removes image support from a catalog model that already has it. To restrict a specific catalog model, use `modelOverrides` keyed by model ID:
+
+```yaml
+llm-pi-ai:
+  providers:
+    anthropic:
+      modelOverrides:
+        claude-sonnet-4-5:
+          input: [text]
+```
+
+Both `input` and `defaultInput` state a claim about your endpoint—they are not verified. A model that declares image support on an endpoint that doesn't serve images will be rejected by the provider at request time, not by dsh at configuration time.
+
+## Via settings.yaml
+
+All provider settings are stored in `$DSH_HOME/settings.yaml`. The Web UI writes this file for you, but you can also edit it directly for configurations the form does not expose (such as per-model `input` modalities or `modelOverrides`).
+
+The file lives at:
+
+```
+$DSH_HOME/settings.yaml
+```
+
+where `$DSH_HOME` defaults to `~/.dsh` if the environment variable is not set. A typical settings file with a custom provider looks like:
+
+```yaml
+llm-pi-ai:
+  providers:
+    my-gateway:
+      apiKeyEnv: GATEWAY_API_KEY
+      api: openai-completions
+      baseURL: https://gateway.example/v1
+      models:
+        - id: legacy-chat
+        - id: vision-preview
+          input: [text, image]
+    anthropic:
+      apiKeyEnv: ANTHROPIC_API_KEY
+      modelOverrides:
+        claude-sonnet-4-5:
+          input: [text]
+```
+
+The full set of supported fields and their defaults is listed in the [plugin configuration catalog](/reference/config-catalog).
+
+## Troubleshooting
+
+| Error | Cause and fix |
+|---|---|
+| `MISSING_CREDENTIAL` | Store the provider key through the Models page or supply the referenced environment variable. |
+| `UNKNOWN_MODEL` | Select a configured model or add the missing model to the custom provider. |
+| Fetch available models returns 401 | Check the API key. Model discovery calls `GET /models`; enter models manually for endpoints that don't provide it. |
+| An image is refused before sending | The model declares no image modality. Add `input: [text, image]` to the model entry in `settings.yaml`. |
+| The provider rejects a request carrying an image | The model claims image support but the endpoint doesn't serve it. Remove `image` from the model's `input` or the route's `defaultInput`, then start a new session. |

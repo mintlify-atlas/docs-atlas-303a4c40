@@ -1,0 +1,171 @@
+---
+title: "Your First DeepSeek Harness Plugin"
+sidebarTitle: "First Plugin"
+description: "Create a minimal DeepSeek Harness plugin from scratch, load it into the Web UI using a cordis.yml patch overlay, and learn the plugin basics."
+---
+
+This tutorial creates a minimal DeepSeek Harness plugin and loads it into the Web UI. You'll build a `hello-plugin` that prints a message on load, then explore how the framework handles cleanup and service dependencies. Start from a repository checkout that has completed the [run-from-source path](https://github.com/deepseek-ai/deepseek-harness#run-from-source).
+
+## What is a Plugin?
+
+In DeepSeek Harness, a plugin is a TypeScript module that exports an `apply` function. The framework calls `apply` when loading the plugin and passes a `ctx` context object through which the plugin registers capabilities:
+
+```ts
+import type { Context } from '@deepseek-ai/cordis'
+
+export const name = 'my-plugin'
+
+export function apply(ctx: Context) {
+  // Register capabilities here.
+}
+```
+
+That is the complete shape. Everything else — tools, services, event listeners — is registered through `ctx` inside `apply`.
+
+## Tutorial
+
+<Steps>
+  <Step title="Create the project directory">
+    From the repository root, create a scratch project for the tutorial:
+
+    ```sh
+    mkdir -p scratch-plugin/src
+    ```
+  </Step>
+
+  <Step title="Create the plugin file">
+    Create `scratch-plugin/src/my-plugin.ts` with the following content:
+
+    ```ts
+    import type { Context } from '@deepseek-ai/cordis'
+
+    export const name = 'hello-plugin'
+
+    export function apply(ctx: Context) {
+      // Required dependencies are ready before apply runs.
+      console.log('[hello-plugin] plugin loaded!')
+    }
+    ```
+  </Step>
+
+  <Step title="Register it in cordis.yml">
+    Run `pwd` from the repository root to get the absolute path, then create `scratch-plugin/cordis.yml` as an overlay that inserts the local plugin. Replace `/absolute/path/to/deepseek-harness` with the path `pwd` printed:
+
+    ```yaml
+    - insert:
+        - id: hello
+          name: '/absolute/path/to/deepseek-harness/scratch-plugin/src/my-plugin.ts'
+    ```
+
+    <Note>
+      The plugin path must be absolute. A patch file contributes configuration but does not change the profile directory from which the loader resolves module paths.
+    </Note>
+  </Step>
+
+  <Step title="Start the Web UI">
+    Start the Web UI with that overlay:
+
+    ```sh
+    pnpm dsh web --patch ./scratch-plugin/cordis.yml
+    ```
+
+    Open `http://127.0.0.1:3080` in your browser.
+  </Step>
+
+  <Step title="Verify the plugin loaded">
+    Check the terminal output — it should print:
+
+    ```
+    [hello-plugin] plugin loaded!
+    ```
+
+    This message appears during startup, confirming the framework loaded your plugin and called `apply`.
+  </Step>
+</Steps>
+
+## Automatic Cleanup
+
+Anything registered through `ctx` — event listeners, tools, or timers — is cleaned up when the plugin unloads. You do not need to call `removeListener` or `clearInterval` manually.
+
+For a resource that needs explicit cleanup, such as a network connection, use `ctx.effect()` to provide its disposer:
+
+```ts
+import type { Context } from '@deepseek-ai/cordis'
+
+export function apply(ctx: Context) {
+  ctx.effect(() => {
+    const timer = setInterval(() => {
+      console.log('heartbeat')
+    }, 5000)
+
+    // The returned function runs when the plugin unloads.
+    return () => clearInterval(timer)
+  })
+}
+```
+
+The framework calls the returned cleanup function when the plugin unloads, whether due to a configuration change, hot-module replacement, or shutdown.
+
+## Declare Dependencies
+
+If your plugin consumes another service such as `tools` or `llm`, declare it in the `inject` array:
+
+```ts
+import type { Context } from '@deepseek-ai/cordis'
+
+export const name = 'my-tool-plugin'
+export const inject = ['tools']
+
+export function apply(ctx: Context) {
+  // ctx.tools is ready here.
+  ctx.tools.register(/* ... */)
+}
+```
+
+The framework waits for every service listed in `inject` to become available before loading the plugin. This means `apply` is only called once all required dependencies are live.
+
+## Three Plugin Forms
+
+In addition to the function module form shown above, a plugin can use object or class form.
+
+**Object form** — useful when you want to colocate `name`, `inject`, and `apply` in a single export:
+
+```ts
+import type { Context } from '@deepseek-ai/cordis'
+
+export default {
+  name: 'my-plugin',
+  inject: ['tools'],
+  apply(ctx: Context) {
+    // ...
+  },
+}
+```
+
+**Class form** — use when the plugin provides a named service to other plugins:
+
+```ts
+import { Service, type Context } from '@deepseek-ai/cordis'
+
+export default class MyService extends Service {
+  static inject = ['tools']
+
+  constructor(ctx: Context) {
+    super(ctx, 'myService')
+    // Perform synchronous initialization in the constructor.
+  }
+}
+```
+
+Function form is sufficient in most cases. Prefer class form only when your plugin needs to expose a service interface for other plugins to consume.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Building a Tool" icon="wrench" href="/plugins/building-a-tool">
+    Add a model-callable tool to your plugin using `defineTool`.
+  </Card>
+  <Card title="Cordis Primer" icon="book" href="/plugins/cordis-primer">
+    Understand the Cordis plugin framework that powers DeepSeek Harness.
+  </Card>
+</CardGroup>

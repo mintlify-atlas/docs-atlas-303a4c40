@@ -1,0 +1,119 @@
+---
+title: "Patch Plugin Configuration with cordis.patch.yml"
+sidebarTitle: "cordis.yml"
+description: "Use cordis.patch.yml overlays to insert, override, or disable plugins in your DeepSeek Harness deployment. Covers patch syntax, --patch overlays, and environment variable interpolation."
+---
+
+`cordis.patch.yml` is the user-controlled configuration layer in DeepSeek Harness. Rather than editing bundle-owned configuration directly, you write a patch file that targets specific plugin rows by ID and replaces or extends them. This keeps your customizations separate from the shipped configuration and survives bundle updates.
+
+## The Patch File
+
+There are three patch file locations, applied in order from lowest to highest precedence:
+
+| Location | Scope |
+|---|---|
+| `$DSH_HOME/profiles/<name>/cordis.patch.yml` | Applies to a single named profile only. |
+| `$DSH_HOME/cordis.patch.yml` | Applies to **all** profiles on this machine. Home-level patches outrank per-profile patches. |
+| `--patch <file>` (CLI flag) | Per-invocation overlay. Applied last, with the highest precedence. Not saved. |
+
+The per-profile file is the right place for most customizations. The home-level file is useful for machine-wide settings such as API keys or workspace roots that should apply regardless of which profile you boot. Use `--patch` for one-off experiments or CI overrides.
+
+<Note>
+  Plugin module paths inside any patch file must be **absolute**. A patch file contributes configuration but does not change the directory from which the loader resolves module paths, so relative paths will not resolve correctly.
+</Note>
+
+## Patch Syntax
+
+A patch file is a **YAML array**. Each element either targets an existing row by `id` to replace its `config`, or uses `insert` to add new rows. Both operations can appear in the same file.
+
+```yaml
+# Override an existing plugin's config (replace the whole config block)
+- id: some-existing-id
+  config:
+    someKey: newValue
+    anotherKey: anotherValue
+
+# Insert one or more new plugin rows
+- insert:
+    - id: my-plugin
+      name: '/absolute/path/to/plugin.ts'
+      config:
+        greeting: hello
+```
+
+When a patch targets a row by `id`, it replaces that row's **entire** `config`. Fields you do not restate revert to the bundle default. If you only want to change one field, you must include all other fields you want to keep.
+
+An `insert` entry adds new rows at the end of the composed list. Each inserted row must have a unique `id` and a `name` pointing to the plugin module.
+
+## Loading a Local Plugin
+
+The most common use of a patch file during development is to side-load a local TypeScript plugin without modifying any bundle. This is how the [first-plugin tutorial](/plugins/first-plugin) works.
+
+Given a plugin at `scratch-plugin/src/my-plugin.ts` inside the repository, create `scratch-plugin/cordis.yml`:
+
+```yaml
+- insert:
+    - id: hello
+      name: '/absolute/path/to/deepseek-harness/scratch-plugin/src/my-plugin.ts'
+```
+
+Replace `/absolute/path/to/deepseek-harness` with the actual absolute path printed by `pwd` from the repository root. Start the server with the overlay:
+
+```sh
+pnpm dsh web --patch ./scratch-plugin/cordis.yml
+```
+
+The server boots the full `web` profile and then applies your overlay on top, inserting the `hello` plugin as the last row. The terminal prints the plugin's startup output during boot.
+
+<Warning>
+  `--patch` overlays apply only to the **current invocation**. They are not written back to the profile's `cordis.patch.yml`. To make a change permanent, add it to the profile patch file instead.
+</Warning>
+
+## Environment Variable Interpolation
+
+Patch files support `!!js` expression nodes in `config` values and `disabled` fields. These are evaluated at mount time in the Node.js context, giving access to `process.env` and other runtime values.
+
+To inject an environment variable into a plugin's config:
+
+```yaml
+- id: my-adapter
+  config:
+    apiKey: !!js process.env.MY_API_KEY
+```
+
+At boot, `process.env.MY_API_KEY` is evaluated and the result becomes the `apiKey` value. If the variable is unset, the value is `undefined`.
+
+`!!js` expressions can also reference other runtime values, such as platform:
+
+```yaml
+- id: bash-sandbox
+  disabled: !!js process.platform === 'win32'
+```
+
+The shipped `dsh-base` bundle uses exactly this pattern to gate the bash and PowerShell tool stacks by platform—disabling bash on Windows and PowerShell on POSIX hosts.
+
+## Disabling a Plugin
+
+To disable a plugin row, add `disabled: true` to its patch entry:
+
+```yaml
+- id: some-plugin
+  disabled: true
+```
+
+You can also use a `!!js` expression for conditional disabling at boot time:
+
+```yaml
+- id: some-plugin
+  disabled: !!js process.env.DISABLE_SOME_PLUGIN === 'true'
+```
+
+A disabled row is present in the composed configuration but its plugin is not loaded. This is useful for turning off optional capabilities (such as telemetry or a specific tool) without removing the row entirely.
+
+To verify that your patch has taken effect—and that the row is correctly disabled—inspect the composed tree:
+
+```sh
+dsh --profile web --dump-config
+```
+
+The output includes `disabled: true` on any row your patch has disabled.

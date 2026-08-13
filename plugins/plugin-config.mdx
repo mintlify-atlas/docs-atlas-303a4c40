@@ -1,0 +1,144 @@
+---
+title: "Add Configuration to a DeepSeek Harness Plugin"
+sidebarTitle: "Plugin Config"
+description: "Make your plugin configurable using Cordis schema declarations. Users set values in cordis.yml; the framework validates and injects config into your apply function."
+---
+
+Hard-coded values belong in configuration, not in source code. DeepSeek Harness uses [Schemastery](https://github.com/shigma/schemastery) — the schema library built into Cordis — to declare a plugin's accepted configuration, validate user-supplied values, fill in defaults, and inject the result as a second argument to `apply`. This tutorial extends the `greet-tool` plugin from [Building a Tool](/plugins/building-a-tool) to make its greeting prefix configurable.
+
+## Define the Config Type
+
+Export a `Config` interface and a Schemastery schema with the same name. Place defaults directly on each schema field:
+
+```ts
+import type { Context } from '@deepseek-ai/cordis'
+import Schema from '@deepseek-ai/schemastery'
+
+export const name = 'my-plugin'
+
+export interface Config {
+  greeting: string
+  maxRetries: number
+  verbose?: boolean
+}
+
+export const Config: Schema<Config> = Schema.object({
+  greeting: Schema.string().default('Hello'),
+  maxRetries: Schema.number().default(3),
+  verbose: Schema.boolean().default(false),
+})
+
+export function apply(ctx: Context, config: Config) {
+  console.log(config.greeting)  // User value or schema default.
+}
+```
+
+When loading the plugin, Cordis validates the user-supplied values against the exported schema and fills any missing keys with their declared defaults. The validated, fully-typed `config` object is passed as the second argument to `apply`.
+
+<Warning>
+  Do not export a plain JavaScript object as `Config`. It does not implement the Standard Schema interface required by Cordis and will cause the plugin to fail loading.
+</Warning>
+
+## Use the Config in `apply`
+
+The second parameter of `apply` receives the validated configuration. You can use it anywhere inside the function — including when registering tools or services:
+
+```ts
+export function apply(ctx: Context, config: Config) {
+  ctx.tools.register(defineTool({
+    name: 'greet',
+    description: 'Greet someone by name.',
+    parameters: {
+      name: { type: 'string', required: true, description: 'The name to greet' },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    async execute(args) {
+      return `${config.greeting}, ${args.name}!`
+    },
+  }))
+}
+```
+
+## Set Config Values in `cordis.yml`
+
+Add a `config` block to the plugin row in `scratch-plugin/cordis.yml`:
+
+```yaml
+- insert:
+    - id: hello
+      name: './src/my-plugin.ts'
+      config:
+        greeting: 'Hi there'
+        maxRetries: 5
+```
+
+Any key not present in the `config` block is filled by the schema default. In this example, `verbose` is omitted so it defaults to `false`.
+
+## Schema Validation
+
+Use Schemastery's built-in validators to express stricter constraints. The schema runs while the plugin loads; invalid configuration fails the load immediately with an actionable error rather than surfacing as a runtime crash later:
+
+```ts
+import type { Context } from '@deepseek-ai/cordis'
+import Schema from '@deepseek-ai/schemastery'
+
+export const name = 'validated-plugin'
+
+export interface Config {
+  apiKey: string
+  timeout: number
+  mode: 'fast' | 'accurate'
+}
+
+export const Config = Schema.object({
+  apiKey: Schema.string().required(),
+  timeout: Schema.number().default(30000),
+  mode: Schema.union(['fast', 'accurate']).default('fast'),
+})
+
+export function apply(ctx: Context, config: Config) {
+  // config is validated and type-safe.
+}
+```
+
+`Schema.string().required()` causes the load to fail if `apiKey` is missing or empty. `Schema.union([...])` restricts `mode` to exactly the listed literals and rejects any other string at load time.
+
+## Design Principles
+
+### Do not hardcode tunable values
+
+DeepSeek Harness requires **anything that two deployments may want to set differently to be a configuration field**:
+
+```ts
+// Wrong: hardcoded timeout.
+const TIMEOUT = 30000
+
+// Correct: configurable with a sensible default.
+export interface Config {
+  timeoutMs: number  // Defaults to 30000.
+}
+```
+
+The test is whether `cordis.yml` can change the value without editing source code.
+
+### Fail loudly on invalid configuration
+
+Express self-contained constraints in the schema so that invalid configuration fails while the plugin loads, not silently at runtime. Constraints that depend on external services or registered resources belong in dependency injection — the [capability seams guide](/plugins/capability-seams) covers that contract.
+
+## Configuration and Hot-Module Replacement
+
+A configuration edit in `cordis.yml` hot-replaces the plugin: the framework unloads the old instance and loads a fresh one with the updated config. Because registrations are effects tracked through `ctx`, the old instance's tools, listeners, and effects are cleaned up automatically before the new instance starts. There is no residual state from the previous load.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Packaging & Installing" icon="box" href="/plugins/packaging-and-installing">
+    Ship the plugin as an installable bundle and install it into a profile.
+  </Card>
+  <Card title="Capability Seams" icon="network-wired" href="/plugins/capability-seams">
+    Provide a named service to other plugins using class-form plugins.
+  </Card>
+</CardGroup>

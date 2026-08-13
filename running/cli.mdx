@@ -1,0 +1,98 @@
+---
+title: "Run dsh from the Command Line"
+sidebarTitle: "CLI Reference"
+description: "Use the dsh CLI to boot profiles, run one-shot headless agents, and manage plugins. Covers all entry modes, flags, and profile composition."
+---
+
+The `dsh` command is the product launcher for DeepSeek Harness profiles. It loads an ordered stack of plugin-bundle patch layers beneath your own user overrides, selects the correct runner for the chosen profile, and forwards all unrecognized flags to the booted application. Invalid commands, unrecognized options intended for another mode, configuration errors, and boot failures all exit with a nonzero status code.
+
+<Note>
+  The `dsh` process uses its **invoking directory** as the default workspace root. Run `dsh` from the directory you want the agent to treat as its working environment.
+</Note>
+
+## Entry Modes
+
+`dsh` supports four distinct entry modes:
+
+| Command | Purpose |
+|---|---|
+| `dsh --profile <name>` | Boot the named profile from `$DSH_HOME/profiles/<name>`. |
+| `dsh --profile headless "job"` | Run one fresh persisted session, print the final answer, and exit. |
+| `dsh web` | Alias for `--profile web`. Starts the browser-based Web UI. |
+| `dsh plugin --profile <name> <pnpm args>` | Manage a profile's plugins by forwarding to pnpm in the profile directory. |
+
+The `web` and `headless` profiles auto-initialize on first use from shipped templates. Any other profile must first be created through `dsh plugin`.
+
+## App Arguments
+
+The launcher parses only its own flags and passes everything after them to the booted profile. Any app plugin in the profile can then read this shared, immutable snapshot via [`dsh-cmdline`](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/boot/cmdline). Because launcher flags come first, the first token the launcher does not recognize marks the start of the app's argument list.
+
+```sh
+# --port belongs to the web app, not the launcher
+dsh --profile web --port 8080
+
+# --resume is consumed by the terminal app (if that profile is installed)
+dsh --profile tui --resume <id>
+
+# The quoted string is the one-shot task for the headless runner
+dsh --profile headless "run the tests"
+
+# Prints the web app's flags, not the launcher's
+dsh --profile web --help
+
+# Prints the launcher's own help
+dsh --help
+```
+
+## Profiles
+
+A profile directory lives at `$DSH_HOME/profiles/<name>` and contains two files:
+
+- **`package.json`** — Out-of-tree plugin dependencies plus the profile manifest under the `dsh.profile` key. The manifest includes an ordered `bundles` list that controls which plugin bundles are loaded.
+- **`cordis.patch.yml`** — The user's own patch layer for this specific profile.
+
+### Layer Order
+
+The configuration tree is composed over an empty root in the following order, from lowest to highest precedence:
+
+1. Each bundle's patch, applied in the order listed in `dsh.profile.bundles`
+2. The profile's own `cordis.patch.yml`
+3. The home-level `$DSH_HOME/cordis.patch.yml`
+4. Any `--patch` overlays passed at invocation time
+
+Bundles named in `dsh.profile.bundles` resolve first from the `dsh` installation itself (for example `@deepseek-ai/dsh-base`, `@deepseek-ai/dsh-web-app`, `@deepseek-ai/dsh-headless`), and then from the profile's own `node_modules`, where `pnpm` installs any out-of-tree plugins.
+
+## Useful Flags
+
+Two flags let you inspect the fully composed configuration tree without actually booting the profile:
+
+| Flag | Effect |
+|---|---|
+| `--dump-default-config` | Print the default configuration produced by the bundle stack before any patches are applied. |
+| `--dump-config` | Print the fully composed configuration tree, including all patch layers. |
+
+These are useful for debugging plugin interactions, verifying that a `cordis.patch.yml` is applied correctly, and auditing the effective settings before running an agent.
+
+```sh
+# Inspect the final composed config for the web profile
+dsh --profile web --dump-config
+
+# Inspect only the bundle defaults for the headless profile
+dsh --profile headless --dump-default-config
+```
+
+## Environment Variables
+
+The following environment variables are recognized by the `dsh` runtime:
+
+| Variable | Required | Description |
+|---|---|---|
+| `DEEPSEEK_API_KEY` | Yes | API key for the DeepSeek model endpoint. |
+| `DEEPSEEK_BASE_URL` | No | Override the default DeepSeek API base URL. Useful when routing through an OpenAI-compatible proxy or a self-hosted endpoint. |
+
+```sh
+export DEEPSEEK_API_KEY=sk-your-key-here
+
+# Optional: point dsh at a local proxy instead of the public endpoint
+export DEEPSEEK_BASE_URL=http://127.0.0.1:8000/v1
+```

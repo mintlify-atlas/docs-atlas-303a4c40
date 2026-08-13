@@ -1,0 +1,77 @@
+---
+title: "Connect a New LLM Provider to DeepSeek Harness"
+sidebarTitle: "Adding an LLM Adapter"
+description: "Implement the LlmAdapter streaming contract to connect any model provider to DeepSeek Harness. Covers registration, protocol obligations, and error handling."
+---
+
+DeepSeek Harness uses an adapter pattern to connect model providers: each provider is a plugin that subclasses `LlmAdapter`, implements the `stream()` generator, and registers itself with `ctx.llm.registerAdapter`. The rest of the system (the agent loop, compaction, token metering) consumes the provider-neutral `ctx.llm` service without knowing which provider is active.
+
+Reference implementations: `packages/llm/llm-deepseek` (direct HTTP, SSE framed by `eventsource-parser`) and `packages/llm/llm-pi-ai` (wrapping an LLM library). Read the `StreamChunk` doc in `packages/llm/llm/src/types.ts` first — it records the protocol conventions both adapters were verified against.
+
+## The Adapter Shape
+
+An adapter is a Cordis plugin that declares a schemastery `Config`, creates an `LlmAdapter` subclass, and registers it under one or more provider route names:
+
+```ts
+class MyAdapter extends LlmAdapter {
+  async * stream(options: GenerateOptions): AsyncIterable<StreamChunk> { … }
+}
+
+export const name = 'llm-myprovider'
+export const inject = ['llm']
+export const Config = z.object({ apiKey: z.string(), … })
+
+export function apply(ctx: Context, config: Config) {
+  ctx.llm.registerAdapter(['my-provider'], new MyAdapter(…))
+}
+```
+
+`options.provider` selects the adapter at call time; `options.model` is the provider-native model id. A dynamic catalog adapter can therefore serve new models without any lifecycle reconfiguration.
+
+<Note>
+Never read ad-hoc key files in code. Secrets are cordis-native: declare them in a schemastery `Config` with env fallbacks (e.g., `z.string().default(process.env.MY_KEY ?? '')`), fed through `cordis.yml` via `!!js process.env.MY_KEY`. This keeps credentials out of source and makes them hot-reloadable.
+</Note>
+
+## Protocol Obligations
+
+The following rules define the contract both reference implementations were verified against. Violating them causes silent data loss or loop hangs.
+
+1. **Emit `usage` BEFORE `finish`; emit nothing after `finish`.** The robust approach: buffer finish/usage chunks until the provider's end-of-stream marker, then flush. This handles providers that send trailing usage-only chunks after the finish event.
+2. **Tool-call `arguments` are raw JSON strings end-to-end.** Stream fragments as `argumentsDelta`. If your provider hands back parsed argument objects, re-stringify them at `block-end`.
+3. **Allocate block `index`es in first-seen stream order; reuse the same index for every delta of the same block.**
+4. **Errors have exactly two sanctioned paths.** THROW from `stream()` for transport and protocol failures (use `LlmError` with a stable code), or end the stream with `finish { kind: 'error' | 'aborted' }` for provider in-band failures. Consumers handle both paths; choose per failure class and document the choice.
+5. **Honor `options.signal`.** Pass it to `fetch` or your SDK. Do not ignore it.
+6. **A `GenerateOptions` field your provider cannot honor (e.g., a `stop` list on a provider without stop sequences): throw `LlmError(..., 'UNSUPPORTED')`.** Do not silently drop unsupported options.
+7. **If the provider requires response ids, signatures, or other native metadata on follow-up calls, emit the minimal lossless-JSON projection as `finish.replayState`.** Validate it when rebuilding history. `LlmRuntime` passes `replayState` only when the historical provider route and target provider route are currently owned by the exact same adapter instance. Your adapter decides whether same-model, cross-model, or cross-provider restoration is legal. Never infer native replay from provider/model names alone when state is absent.
+
+## Thinking Mode and Model Metadata
+
+Provider-specific thinking-mode toggles stay in the adapter's `Config`. Model metadata uses one provider-neutral capability seam:
+
+- Implement `resolveModel()` with provider/model identity and optional `context` and `reasoning` fields.
+- Declare a configured `defaultEffort` only when one exists for the provider.
+- Honor the resolver's optional `AbortSignal`.
+
+Reasoning efforts are ordered opaque ids mapped to provider wire requests by the adapter. Preserve the adapter's authoritative selectable list — including an adapter-defined `off` when the provider supports disabling reasoning — without exposing final wire spellings or clamping unsupported values. An id need not equal its wire representation.
+
+## Implementation Structure
+
+Keep the following as separate responsibilities in your adapter package:
+
+| Responsibility | What it owns |
+|---|---|
+| Wire types | Provider-specific request/response TypeScript types |
+| Request serialization | Mapping `GenerateOptions` → provider request shape |
+| Transport parsing | SSE / HTTP framing, event buffering |
+| Chunk translation | Provider-native events → `StreamChunk` values |
+| Adapter class | `LlmAdapter` subclass wiring the above together |
+
+`llm-deepseek` is the reference layout for this separation. Keeping these layers distinct makes each independently testable and makes future provider API changes surgical.
+
+## Registration Details
+
+- **One adapter per provider route.** Duplicate route registration throws immediately.
+- **Multi-route registration is all-or-nothing.** If any route in the array is already taken, none are registered.
+- **Registration is effect-based (HMR-safe).** When the plugin fiber is disposed (e.g., on hot-reload or plugin removal), the adapter is unregistered automatically. No manual cleanup is needed.
+
+Because `options.provider` selects adapters by route name, you can register a single adapter under multiple route aliases if your provider serves multiple named endpoints from the same implementation.

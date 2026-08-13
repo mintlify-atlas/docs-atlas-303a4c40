@@ -1,72 +1,114 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mintlify Starter Kit",
+  "name": "DeepSeek Harness",
+  "theme": "luma",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#4c6cfc"
   },
-  "favicon": "/favicon.svg",
-  "navigation": {
-    "pages": [
-      {
-        "group": "Getting Started",
-        "pages": [
-          "index",
-          "quickstart"
-        ]
-      }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
+  "favicon": "https://media.brand.dev/577bc71a-ac6d-420c-8b7c-1579d2fd138e.png",
   "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
     "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://app.mintlify.com"
+      "type": "github",
+      "href": "https://github.com/deepseek-ai/deepseek-harness"
     }
-  },
-  "contextual": {
-    "options": [
-      "copy",
-      "view",
-      "chatgpt",
-      "claude",
-      "perplexity",
-      "mcp",
-      "cursor",
-      "vscode"
-    ]
   },
   "footer": {
     "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
+      "github": "https://github.com/deepseek-ai/deepseek-harness"
     }
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Getting Started",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "concepts"
+            ]
+          },
+          {
+            "group": "Running dsh",
+            "pages": [
+              "running/web-ui",
+              "running/cli",
+              "running/python-sdk"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/providers",
+              "configuration/profiles-bundles",
+              "configuration/cordis-yml"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Plugin Development",
+        "groups": [
+          {
+            "group": "Tutorials",
+            "pages": [
+              "plugins/first-plugin",
+              "plugins/building-a-tool",
+              "plugins/plugin-config",
+              "plugins/packaging-and-installing"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "plugins/cordis-primer",
+              "plugins/plugin-lifecycle",
+              "plugins/capability-seams"
+            ]
+          },
+          {
+            "group": "Extension Guides",
+            "pages": [
+              "plugins/adding-a-tool",
+              "plugins/adding-an-llm-adapter",
+              "plugins/adding-a-service"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Architecture",
+        "groups": [
+          {
+            "group": "System Design",
+            "pages": [
+              "architecture/overview",
+              "architecture/agent-lifecycle",
+              "architecture/session-log",
+              "architecture/tool-execution-pipeline"
+            ]
+          },
+          {
+            "group": "Subsystems",
+            "pages": [
+              "architecture/subsystems/llm-streaming",
+              "architecture/subsystems/tools",
+              "architecture/subsystems/sessions",
+              "architecture/subsystems/sandbox"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "reference/tool-catalog",
+              "reference/config-catalog",
+              "reference/glossary"
+            ]
+          }
+        ]
+      }
+    ]
   }
 }

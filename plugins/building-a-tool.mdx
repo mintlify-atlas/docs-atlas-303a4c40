@@ -1,0 +1,87 @@
+---
+title: "Build a Model-Facing Tool Plugin"
+sidebarTitle: "Building a Tool"
+description: "Add a model-callable tool to DeepSeek Harness using defineTool. Covers typed parameters, canonical outputs, and the tool execution contract."
+---
+
+This tutorial adds a `greet` tool to the Web UI — a model-callable function that accepts a name and returns a personalized greeting. The model can invoke it directly in conversation. By the end you will understand how `defineTool` wires together parameter validation, execution, and model-facing output rendering.
+
+## Prerequisites
+
+Complete the [Your First Plugin](/plugins/first-plugin) tutorial and keep the `scratch-plugin` directory it produces. This tutorial modifies that directory in place.
+
+## Tutorial
+
+<Steps>
+  <Step title="Replace my-plugin.ts with the greet tool plugin">
+    Replace the contents of `scratch-plugin/src/my-plugin.ts` with the following:
+
+    ```ts
+    import type { Context } from '@deepseek-ai/cordis'
+    import { defineTool } from '@deepseek-ai/dsh-tools'
+
+    export const name = 'greet-tool'
+    export const inject = ['tools']
+
+    export function apply(ctx: Context) {
+      ctx.tools.register(defineTool({
+        name: 'greet',
+        description: 'Greet someone by name.',
+        parameters: {
+          name: { type: 'string', required: true, description: 'The name to greet' },
+        },
+        output: {
+          schema: { type: 'string' },
+          render: (_args, value) => [{ type: 'text', text: value }],
+        },
+        async execute(args) {
+          return `Hello, ${args.name}!`
+        },
+      }))
+    }
+    ```
+
+    The `cordis.patch.yml` from the previous tutorial already points at this file, so no YAML change is needed.
+  </Step>
+
+  <Step title="Start the server">
+    Start (or restart) the development server with the same patch overlay:
+
+    ```sh
+    pnpm dsh web --patch ./scratch-plugin/cordis.yml
+    ```
+  </Step>
+
+  <Step title="Test the tool">
+    Open `http://127.0.0.1:3080` and send this message in the chat:
+
+    > Use the greet tool to greet Ada.
+
+    The model calls the `greet` tool with `{ name: "Ada" }` and receives `Hello, Ada!` as the tool result, which it incorporates into its reply.
+  </Step>
+</Steps>
+
+## How `defineTool` Works
+
+Each part of the `defineTool` call has a distinct responsibility:
+
+**`inject = ['tools']`** — tells Cordis to wait for the tool registry service before loading the plugin. `ctx.tools` is guaranteed to be live when `apply` runs.
+
+**`parameters`** — a plain object describing each argument's JSON Schema type, whether it is required, and a natural-language description. `defineTool` infers and validates the TypeScript type of `args` from this declaration, so `args.name` inside `execute` is typed as `string`.
+
+**`execute(args)`** — the async function the framework calls when the model invokes the tool. It returns the canonical value declared by `output.schema` — in this case a plain string.
+
+**`output.render(_args, value)`** — converts the canonical return value into a list of model-facing content blocks. The framework passes these blocks back to the model as the tool result. Here it produces a single `{ type: 'text', text: value }` block.
+
+**Registration is effect-based** — `ctx.tools.register(...)` is tracked by the framework as a side effect of the plugin. When the plugin unloads (for example, due to a configuration edit or hot-module replacement), the tool is automatically deregistered without any manual cleanup code.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Plugin Config" icon="sliders" href="/plugins/plugin-config">
+    Make the greeting configurable through cordis.yml using Schemastery schemas.
+  </Card>
+  <Card title="Tool Authoring Reference" icon="book-open" href="/plugins/adding-a-tool">
+    Nested schemas, canonical values, background work, policy hooks, Code Mode, and UI cards.
+  </Card>
+</CardGroup>

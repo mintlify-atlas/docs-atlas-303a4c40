@@ -1,0 +1,149 @@
+---
+title: "Run AI Agents from Python with DeepSeek Harness SDK"
+sidebarTitle: "Python SDK"
+description: "Install the deepseek-harness Python SDK and run agent tasks programmatically. The SDK drives a bundled Node.js runtime over JSON-RPC without requiring a system Node.js install."
+---
+
+The DeepSeek Harness Python SDK is the programmatic alternative to the Web UI. It drives `dsh` as a managed subprocess, communicating over newline-delimited JSON-RPC on stdio. Installing `deepseek-harness-sdk` from PyPI automatically installs a matching `deepseek-harness-runtime-bin` platform wheel, so the SDK bundles its own runtime and **requires no system Node.js installation**.
+
+## Prerequisites
+
+Before installing the SDK, confirm you have the following:
+
+- **Python 3.10 or newer**
+- One of the supported platforms: Linux x64, Linux arm64, or macOS 14 or newer on arm64
+- A DeepSeek-compatible API key
+- An isolated workspace directory that the agent is permitted to modify
+
+## Get Started
+
+<Steps>
+  <Step title="Install the SDK">
+    Create a virtual environment and install `deepseek-harness-sdk` from PyPI. This also installs the same-version bundled runtime binary:
+
+    ```sh
+    python -m venv .venv
+    . .venv/bin/activate
+    python -m pip install deepseek-harness-sdk
+    ```
+  </Step>
+
+  <Step title="Set your credentials">
+    Export your DeepSeek API key. Optionally override the base URL if you are routing through an OpenAI-compatible proxy:
+
+    ```sh
+    export DEEPSEEK_API_KEY=sk-your-key-here
+    # export DEEPSEEK_BASE_URL=http://127.0.0.1:8000/v1
+    # export DSH_MODEL=deepseek-v4-flash
+    # export DSH_SYSTEM_PROMPT='You are a helpful software engineer assistant.'
+    ```
+  </Step>
+
+  <Step title="Run the example script">
+    Clone the repository to access its checked-in example composition, then run a task against an isolated workspace:
+
+    ```sh
+    git clone https://github.com/deepseek-ai/deepseek-harness.git
+    cd deepseek-harness
+
+    python examples/jsonrpc-agent/minimal.py \
+      --workspace /absolute/path/to/workspace \
+      --session-root /absolute/path/to/sessions \
+      --session-id example-001 \
+      "Inspect the repository and fix the failing tests."
+    ```
+
+    The script prints the final assistant response to stdout. The session directory receives a JSONL log containing the assembled model requests and all tool calls.
+  </Step>
+</Steps>
+
+<Note>
+  `DEEPSEEK_BASE_URL` is optional and defaults to the public DeepSeek API endpoint. Set it only when your model is served by a proxy or a self-hosted OpenAI-compatible server.
+</Note>
+
+## SDK Usage
+
+The `minimal.py` example is a thin wrapper around the `DeepSeekHarness` context manager. Use the same API directly in your own programs:
+
+```python
+from pathlib import Path
+
+from deepseek_harness import DeepSeekHarness
+
+config = Path("examples/jsonrpc-agent/minimal.cordis.yml").resolve()
+workspace = Path("/absolute/path/to/workspace").resolve()
+sessions = Path("/absolute/path/to/sessions").resolve()
+
+with DeepSeekHarness(
+    provider="deepseek-official",
+    model="deepseek-v4-flash",
+    max_tokens=49_152,
+    cwd=str(workspace),
+    session_root=str(sessions),
+    cordis=str(config),
+) as harness:
+    result = harness.run(
+        "Inspect the repository and fix the failing tests.",
+        session_id="example-001",
+    )
+
+print(result.final_response)
+```
+
+`DeepSeekHarness` starts the bundled runtime lazily on the first call and keeps it alive until the context manager exits or `close()` is called explicitly.
+
+**Constructor parameters:**
+
+| Parameter | Description |
+|---|---|
+| `provider` | Provider route registered by the Cordis composition (e.g. `"deepseek-official"`). |
+| `model` | Model ID resolved by the provider adapter (e.g. `"deepseek-v4-flash"`). |
+| `max_tokens` | Optional per-request output-token cap for the root agent and its in-process descendants. Omit to let the provider default apply. |
+| `cwd` | Absolute path to the workspace the agent may access. |
+| `session_root` | Absolute path to the directory that stores session logs and state. |
+| `cordis` | Path to the Cordis composition YAML file that configures the runtime. |
+
+`harness.run()` returns a `RunResult` with the following fields:
+
+| Field | Description |
+|---|---|
+| `final_response` | The last committed root-session assistant text in the activity interval. |
+| `finish_reason` | The `kind` of the last root-session `turn/end` event: `completed`, `max-tokens`, `error`, or `None` when no turn ended. |
+| `session_id` | The session ID used for this run. |
+| `session_root` | The session root directory. |
+| `events` | Root-session events only. |
+| `notifications` | Root session and all known descendant notifications in wire order. |
+
+<Tip>
+  Reuse the same `DeepSeekHarness` instance for multiple `harness.run()` calls. The runtime subprocess stays alive across calls, avoiding repeated startup overhead. Pass the same `session_id` to continue a conversation in the same persistent shell; pass a new `session_id` to start a completely independent task.
+</Tip>
+
+## Session IDs and Persistence
+
+`cwd` sets the workspace available to the agent; `session_root` is where session logs and state are stored.
+
+- **Fresh session ID** — Each call with a new `session_id` starts a clean, independent task with its own shell process and conversation history.
+- **Reused session ID** — Reusing an ID continues the same durable conversation, preserving the persistent shell process's working directory, exported variables, and shell functions.
+
+The session directory receives an uncompressed **JSONL log** containing the assembled model requests, tool calls, and responses for the entire session lifetime.
+
+<Warning>
+  The example composition uses `danger-full-access`. The persistent Bash shell and the editor can modify any path accessible to the runtime process. Run it only inside a disposable checkout or a container. The persistent PTY backend requires a POSIX terminal substrate, so this composition does not support Windows.
+</Warning>
+
+## Example Composition
+
+The `minimal.cordis.yml` composition checked into the repository is intentionally minimal. Its properties are:
+
+| Property | Value |
+|---|---|
+| System prompt | `DSH_SYSTEM_PROMPT`, falling back to `You are a helpful software engineer assistant.` |
+| Model | `--model` flag, then `DSH_MODEL` env var, then `deepseek-v4-flash` |
+| Model-facing tools | Persistent `bash` and `str_replace_editor` only |
+| Bash timeout | 300 seconds |
+| Editor output limit | 16,000 characters |
+| Context compaction | Disabled |
+| Filesystem | Bare local backend; absolute editor paths may address any path visible to the runtime process |
+| Session persistence | Uncompressed JSONL under `DSH_SESSION_ROOT` |
+
+The composition deliberately omits harness identity, workspace prompt text, skills, one-shot Bash, task tools, compaction, and every other model-facing plugin. Sandbox-policy facts are logged as runtime user context rather than appended to the system prompt.

@@ -1,0 +1,210 @@
+---
+title: "Capability Seams: Swappable Service Layers"
+sidebarTitle: "Capability Seams"
+description: "Learn how DeepSeek Harness uses the three-role seam pattern to make capabilities swappable: Service Definitions, Service Providers, and Consumers."
+---
+
+A **seam** is a capability that can be replaced without changing its callers. In DeepSeek Harness, capabilities like Bash execution, filesystem access, LLM inference, and session persistence are all seams — the model-facing tools and agent loop that use them are insulated from which provider is actually installed. This is what lets you drop in a sandbox executor, a remote filesystem, or a different LLM backend by editing `cordis.yml` rather than rewriting plugin code.
+
+A seam is not a single package; it is the relationship between three roles across one or more packages.
+
+## The Three Roles
+
+When a capability needs replaceable providers, Harness separates three distinct roles. Put each in its own package when the roles need to evolve or be replaced independently; a single package may own more than one role for simpler capabilities.
+
+**Service Definition** — owns the `ctx.<key>` and all vocabulary types (request shapes, result shapes, error types). This package is the only one the other two roles import. It changes rarely after callers depend on its contract.
+
+```ts
+// packages/my-cap/my-cap/src/index.ts
+import { Service, type Context } from '@deepseek-ai/cordis'
+
+declare module '@deepseek-ai/cordis' {
+  interface Context {
+    myCap: MyCapService
+  }
+}
+
+export abstract class MyCapService extends Service {
+  constructor(ctx: Context) {
+    super(ctx, 'myCap')
+  }
+
+  /** Execute the capability. */
+  abstract execute(request: MyCapRequest): Promise<MyCapResult>
+}
+
+export interface MyCapRequest {
+  input: string
+}
+
+export interface MyCapResult {
+  output: string
+}
+```
+
+<Tip>
+The Service Definition uses an `abstract class`, not a TypeScript `interface`. This is intentional: Cordis service registration requires a class that extends `Service`. An `interface` cannot be registered as a service provider.
+</Tip>
+
+**Service Provider** — implements the abstract class from the Service Definition. Multiple providers can exist for the same seam (local, remote, sandboxed, replayed). The provider and consumer never import each other.
+
+```ts
+// packages/my-cap/my-cap-local/src/index.ts
+import type { Context } from '@deepseek-ai/cordis'
+import { MyCapService, type MyCapRequest, type MyCapResult } from '@deepseek-ai/dsh-my-cap'
+
+class MyCapLocal extends MyCapService {
+  async execute(request: MyCapRequest): Promise<MyCapResult> {
+    // Local provider implementation.
+    return { output: request.input.toUpperCase() }
+  }
+}
+
+export const name = 'my-cap-local'
+
+export function apply(ctx: Context) {
+  ctx.plugin(MyCapLocal)
+}
+```
+
+**Consumer** — injects the service key and calls it. The consumer depends only on the Service Definition package and has no knowledge of which provider is loaded. Consumers are typically tool plugins that expose the capability to the model.
+
+```ts
+// packages/my-cap/tool-my-cap/src/index.ts
+import type { Context } from '@deepseek-ai/cordis'
+import { defineTool } from '@deepseek-ai/dsh-tools'
+
+export const name = 'tool-my-cap'
+export const inject = ['tools', 'myCap']
+
+export function apply(ctx: Context) {
+  ctx.tools.register(defineTool({
+    name: 'my_cap',
+    description: 'Execute my capability.',
+    parameters: {
+      input: { type: 'string', required: true },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    async execute(args) {
+      const result = await ctx.myCap.execute({ input: args.input })
+      return result.output
+    },
+  }))
+}
+```
+
+## The Bash Example
+
+The Bash execution capability is the canonical three-role example in dsh:
+
+- **`dsh-shell`** (Service Definition) — defines `ctx.shell`, the `BashRequest` and `BashResult` types, and the abstract `ShellService` class.
+- **`dsh-bash-local`** / **`dsh-bash-sandbox`** (Service Providers) — each extends `ShellService` and implements Bash execution, one locally and one inside the sandbox.
+- **`dsh-tool-bash`** (Consumer) — injects `'shell'` and exposes Bash as a model-callable tool.
+
+```
+┌─────────────┐     ┌──────────────────┐     ┌──────────────┐
+│  dsh-shell   │────▶│  dsh-bash-local  │     │ dsh-tool-bash│
+│(definition) │     │    (provider)     │     │(consumer/tool)│
+└─────────────┘     └──────────────────┘     └──────────────┘
+       ▲                                            │
+       └────────────────────────────────────────────┘
+                    inject: ['shell']
+```
+
+`dsh-tool-bash` does not import `dsh-bash-local` or `dsh-bash-sandbox`. It only imports `dsh-shell` for types and injects `'shell'` at runtime. Swapping the provider requires changing one line in `cordis.yml`.
+
+## Why the Split Matters
+
+### Replace providers
+
+One Service Definition can have multiple providers. Selecting a different provider is a `cordis.yml` change — the Service Definition and consumer are untouched:
+
+```yaml
+# Use the local Bash executor.
+- name: '@deepseek-ai/dsh-bash-local'
+
+# Replace with the sandboxed executor (same ctx.shell interface):
+# - name: '@deepseek-ai/dsh-bash-sandbox'
+
+- name: '@deepseek-ai/dsh-tool-bash'
+```
+
+### Evolve independently
+
+- The Service Definition changes rarely once callers depend on its contract.
+- Service Providers can improve performance and security without touching the tool.
+- Consumers can change how they present the capability to the model without touching the provider.
+
+### Decouple dependencies
+
+- The Service Provider depends on the Service Definition.
+- The Consumer depends on the Service Definition.
+- The Service Provider and Consumer **do not depend on each other.**
+
+This means adding a new provider — say, an E2B-backed remote executor — requires no changes to `dsh-tool-bash`.
+
+## Built-in Capability Families
+
+Harness ships a set of built-in seams. Each `ctx.<key>` column shows the service key consumers inject:
+
+| `ctx` key | Role | Description |
+|---|---|---|
+| `ctx.fs` | `seam` | Filesystem provider seam — `fs-local`, `fs-sandbox`, `fs-e2b` |
+| `ctx.shell` | `seam` | Bash executor seam — `bash-local`, `bash-sandbox`, `pwsh-local` |
+| `ctx.subprocess` | `seam` | Subprocess seam — `subprocess-local`, `subprocess-e2b` |
+| `ctx.sandbox` | `seam` | Process-sandbox seam — `sandbox-local` |
+| `ctx.llm` | `seam` | LLM adapter registry — `llm-deepseek`, `llm-pi-ai`, `llm-replay` |
+| `ctx.subagents` | `seam` | Subagent provider and continuation service — multiple transport providers |
+| `ctx.sessionPersistence` | `seam` | Durable session persistence — `session-persistence-jsonl`, `session-persistence-sqlite` |
+| `ctx.sessionQuery` | `seam` | Session reads, traces, filters, and search — `session-query-sqlite` |
+| `ctx.settings` | `seam` | User-settings seam — `settings-file` |
+| `ctx.credentials` | `seam` | Credential seam — `credentials-local` |
+| `ctx.sessionTelemetry` | `seam` | Session telemetry seam — `session-telemetry-otel` |
+| `ctx.storage` | `seam` | Non-session storage hub — `storage-json`, `storage-sqlite` |
+| `ctx.compaction` | `seam` | Compaction seam — `compaction-basic` |
+| `ctx.approval` | `seam` | Approval seam — `acp` (ACP bridge) |
+| `ctx.codeRuntime` | `seam` | Code-execution seam — `code-runtime-worker` |
+| `ctx.web` | `seam` | Web access provider registry — search and fetch providers |
+| `ctx.lsp` | `seam` | Language-server navigation seam — `lsp-local` |
+| `ctx.terminals` | `seam` | Persistent PTY session registry — `terminal-bash` |
+| `ctx.jobs` | `seam` | Background job registry — `jobs-local` |
+| `ctx.spillStore` | `seam` | Spill storage seam — `spill-local` |
+| `ctx.sessionTitle` | `seam` | Log-backed session titles — first-prompt and all-prompts LLM providers |
+| `ctx.skills` | `seam` | Skill provider registry — `skill-badge`, `skill-filesystem` |
+| `ctx.attachments` | `seam` | Durable binary attachment storage — `attachment-local` |
+| `ctx.workflowEngine` | `seam` | Workflow script engine — `workflow-worker-thread` |
+| `ctx.userQuestions` | `seam` | Human question/answer seam |
+| `ctx.directoryPicker` | `seam` | Workspace-directory picking seam — native and browse backends |
+
+The capability-seams reference page (generated from source) is the authoritative list. Use those generated regions and the service's TypeScript interface while developing a plugin.
+
+## Replacing a Provider
+
+To replace a provider, load a different package that provides the same `ctx.<key>`. In `cordis.yml`, swap the provider row:
+
+```yaml
+# Default: local Bash execution
+- name: '@deepseek-ai/dsh-bash-local'
+
+# To use sandbox Bash execution instead, replace the line above with:
+# - name: '@deepseek-ai/dsh-bash-sandbox'
+
+# The consumer plugin is unchanged in either case.
+- name: '@deepseek-ai/dsh-tool-bash'
+```
+
+For your own three-role capability, compose it the same way:
+
+```yaml
+- name: '@deepseek-ai/dsh-my-cap-local'
+- name: '@deepseek-ai/dsh-tool-my-cap'
+```
+
+Because `dsh-tool-my-cap` injects `'myCap'` by name, it will automatically unload when `dsh-my-cap-local` is removed and reload when a new provider is added — no code changes required.
+
+<Tip>
+Design all three roles before writing any code. Decide on the `ctx.<key>` name, the request/result types, and which package owns them. Changing the vocabulary types after consumers depend on the Service Definition is the hardest part of evolving a seam.
+</Tip>

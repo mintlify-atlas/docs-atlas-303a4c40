@@ -1,0 +1,119 @@
+---
+title: "Tool Authoring Reference for DeepSeek Harness"
+sidebarTitle: "Adding a Tool"
+description: "Reference guide for writing model-facing tools in DeepSeek Harness. Covers defineTool, typed schemas, canonical outputs, the execute() contract, and UI card presentation."
+---
+
+This page covers the full contract a model-facing tool must satisfy in DeepSeek Harness (dsh): the minimal plugin shape, the rules governing `execute()`, long-running work patterns, execution policy extension points, Code Mode integration, and UI card presentation. For an ordered first-tool walkthrough, follow the [Build a tool tutorial](/plugins/building-a-tool). The production-grade reference implementation is `packages/shell/tool-bash`.
+
+## The Minimal Tool Shape
+
+A tool plugin injects the `tools` service, then calls `ctx.tools.register(defineTool({…}))` inside `apply`. The complete annotated example below defines a `read_file` tool:
+
+```ts
+import { readFile } from 'node:fs/promises'
+import type { Context } from '@deepseek-ai/cordis'
+import { defineTool } from '@deepseek-ai/dsh-tools'
+
+export const name = 'my-tool'
+export const inject = ['tools']
+
+export function apply(ctx: Context) {
+  ctx.tools.register(defineTool({
+    name: 'read_file',
+    description: 'Read a file from disk.',          // what the model sees
+    parameters: {
+      path: { type: 'string', required: true, description: 'Absolute path' },
+      limit: { type: 'number' },                     // optional by default
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    async execute(args, exec) {
+      // args is TYPED from the schema: { path: string; limit?: number }
+      // exec carries immutable identity + token; signal is the operational field
+      return readFile(args.path, { encoding: 'utf8', signal: exec.signal })
+    },
+  }))
+}
+```
+
+The `parameters` object uses `ParameterSchemaSpec`: each key is a named parameter, `required: true` marks it mandatory, and all other keys are optional by default. The `output.schema` uses `ValueSchemaSpec` and declares the canonical JSON type that `execute` must return. `output.render` converts the canonical value into model-facing content blocks.
+
+<Note>
+Registration is effect-based: disposing the plugin fiber automatically unregisters the tool. Schemas flow into system-prompt assembly automatically, and the tool is available in Code Mode without additional wiring.
+</Note>
+
+## Rules of the execute() Contract
+
+The following rules govern everything that happens inside `execute` and around its invocation:
+
+- **Args are validated for you.** `defineTool` validates model-generated `arguments` against the `ParameterSchemaSpec` before `execute` runs — types, required keys, literal constraints, exact-one unions, and nested values are all checked. Inside `execute`, `args` already matches `InferArgs`. Explicit object nodes declare `additionalProperties: true | false`; the implicit parameter root stays open. You still hand-check constraints the DSL does not express (non-empty strings, positive numbers, cross-field rules). Raw JSON-Schema `ToolDefinition`s registered directly own their own input validation.
+- **Registration borrows your readonly definition.** A typed same-process contribution is not a serialization boundary; do not mutate its schema or replace callbacks after registration. `schemas()` materializes only the explicit model-facing projection. To hot-swap a tool, dispose its owning effect and register the replacement; mutable state inside the callback closure remains ordinary plugin state.
+- **Execution identity is protected.** The registry materializes `arguments` as detached lossless JSON, freezes that value before policy starts, and assigns an opaque `exec.token`. `callId`, `name`, `arguments`, `agent`, `token`, the required caller-owned `signal`, and an optional enclosing-transport `parent` token stay immutable through dispatch. `parent` is identity-only and exposes no live outer execution. Treat `args` as readonly input.
+- **Declare and return one canonical JSON value.** `output.schema` uses `ValueSchemaSpec` and may have an object, array, scalar, or null root. `execute` returns only the inferred value; the registry snapshots it as lossless JSON, validates it, freezes it, and passes it to `output.render(args, value)`. Do not return content blocks from the body or make callers parse prose for ids and fields.
+- **Throwing or returning an invalid value means `isError`.** The registry catches throws and contains schema, renderer, metadata-projector, and lossless-JSON failures before observers run. Throw for infrastructure failures. Represent a successful domain outcome in the canonical value even when the Native renderer explains a non-ideal state (such as a non-zero process exit).
+- **Honor `exec.signal`.** Cancel in-flight work when it fires.
+- **Project durable card data with `presentationMeta` (optional).** `output.presentationMeta(args, value)` derives replayable JSON from the same canonical value. The core persists it on `tool/result` and hands it to `presentResult`, so a card that needs result-time facts — such as applied hunks for `write`/`edit` — survives replay without persisting the full canonical value. The projector is skipped for nested Code dispatches because they have no cards.
+- **Use `exec.agent` for async notifications.** `agent.inject({ content, source: { kind: 'plugin', plugin: '<name>' } })` appends durable context the next model request will see — it is not a wake-up (an idle agent stays idle). Guard against disposed agents with try/catch.
+
+## Long-Running Work
+
+Gate `run_in_background` with producer config, then register through `ctx.jobs.start({ kind, label, owner: exec.agent, run })`. The registry rejects a pre-aborted invocation before the producer body; the runtime validates ownership and task-controller availability before `run()` starts work, then supplies the id, session fence, generic control tools, notices, and owner cleanup.
+
+A successful background branch returns a typed canonical handle such as `{ kind: 'background', jobId }`. Its Native renderer may include human prose such as `started background job bash-1`, but Code Mode must never parse that prose to recover the id — the id is in the canonical value.
+
+The producer supplies:
+- Synchronous `cancel`
+- Non-rejecting `done` that settles after resource cleanup
+- Optional consuming `readOutput` with bounded-output formatting
+
+A pre-aborted call is a failure because no task exists whose id could satisfy the successful output schema. Once `ctx.jobs.start()` publishes the id, use a task-owned cancellation signal rather than `exec.signal`: later outer-call cancellation stops waiting for the call but does not kill published work. `job_kill`, owner disposal, and service teardown own that lifetime. Foreground work remains coupled to `exec.signal`. See `dsh-tool-bash` for a stream producer reference implementation.
+
+## Execution Policy and Observation
+
+Prefer not to build deployment policy into the tool body itself. DeepSeek Harness provides dedicated extension points for each concern:
+
+| Extension point | When to use it |
+|---|---|
+| `tools/pre-execute` | Extensible allow/deny/ask policy (the permission-gate pattern) |
+| `ctx.tools.guard()` | A final monotonic deny that later listeners cannot undo |
+| `tools/execute` | Wrap dispatch with a deadline, retry, or metrics collection |
+| `tools/post-execute` | Replace presentation content or the returned value, block the result, or attach model-facing context |
+| `tools/result` | Observe the immutable normalized outcome — no mutations |
+
+A content replacement in `tools/post-execute` leaves programmatic access to `value` intact; confidentiality policy blocks or replaces the value. Only an around-dispatch wrapper in `tools/execute` receives a mutable view and may replace and restore `exec.signal` to impose a deadline — it cannot remove the signal. See [Adding a Service](/plugins/adding-a-service) for the permission-gate example.
+
+## Code Mode
+
+In Code Mode, every visible registered tool is available as `await tools.<name>(args)` without extra integration. The generated `ToolArgsMap` and `ToolOutputMap` derive exact argument and canonical-return types from the same schemas, and calls re-enter the normal execution pipeline.
+
+A successful call resolves to the final canonical JSON value after policy — not to rendered Native content. A failed call rejects with the real `ToolCallError`; programs can inspect only its `name`, `toolName`, and human-readable `message`, not internal error codes or a failure union.
+
+Design `output.schema` as a useful programmatic API: return handles and fields directly, allow scalar/array/null roots when they are the honest value, and keep human explanation in `output.render`. Intermediate values are execution-local, are not persisted or prompt-truncated, and have no byte cap — though the producer's truthful acquisition bounds and process memory still matter.
+
+## UI Presentation
+
+A tool's `output.render` returns model-facing content; its **UI card** is a separate concern declared through pure presentation projections. Design `presentCall` and `presentResult` alongside the canonical value. A tool with no UI presentation falls back to a generic card (title = tool name, raw args as input).
+
+Both methods return a **`card`-tagged render intent**. Pick the card kind that matches what your tool does:
+
+**`presentCall(args)`** returns a `ToolCallView` (the PENDING card):
+- `{ card: 'generic', title, kind?, rawInput?, content?, locations? }` — the default. Set `kind` for an icon (`read`/`search`/…). Set `locations: [{ path, line? }]` for any file your tool touches so a capable editor can follow along and jump to it.
+- `{ card: 'terminal', title, description?, cwd? }` — use when the call IS a shell command. `title` is the command; `description` renders above the terminal card. (Used by `tool-bash`.)
+- `{ card: 'diff', title, diffs, locations? }` — use when the call creates or modifies a file. `diffs: [{ path, oldText, newText }]` (`oldText: null` for a new file) renders as an inline diff card. (Used by `tool-fs` `write`/`edit`.)
+
+**`presentResult(args, { content, isError, meta? })`** returns the completed card:
+- `generic` — supply an optional title and content.
+- `terminal` — supply raw output and optional exit metadata; each UI renders its capable or fallback view.
+- `diff` — supply applied hunks, often derived by `output.presentationMeta` and carried in persisted `result.meta` so replay reproduces the diff view correctly.
+- `search` — supply a discovery result reconstructed from persisted `result.meta`: grouped-by-file matches (`shape: 'matches'`, grep) or a flat path list (`shape: 'paths'`, glob), plus `truncated`/`total` so a UI never presents a capped result as complete.
+- `web` — supply a completed web retrieval, discriminated by `kind: 'search' | 'fetch'`, derived from `result.meta`.
+
+**Hard rules for presentation methods:**
+- **Purity.** These run during live streaming AND on session-log replay, so they must be pure functions of `args` (and the result) — no I/O, no reading session state, no clock or random. If you need the file's old content or the working directory inside `presentCall`, that belongs in durable result metadata or the adapter, not the presenter.
+- **UI-only formatting stays out of the model result.** Fenced code blocks, diffs, relativized paths — none of these belong in the canonical value or Native content merely to serve a UI. `output.render` owns model-facing prose; `presentationMeta` plus card presenters own replayable UI state.
+- **`defineTool` soft-validates the display path.** Malformed or older logged arguments make the wrapper return `undefined` (a generic fallback) rather than throw — display must never crash a replay.
+
+The neutral vocabulary lives in `dsh-tools`; tools never import a UI or transport type. Host/client runtimes map each `card` kind into their own view. See `dsh-tool-fs` (generic/diff cards) and `dsh-tool-bash` (terminal card) for reference implementations.

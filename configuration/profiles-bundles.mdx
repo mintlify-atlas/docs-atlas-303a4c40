@@ -1,0 +1,112 @@
+---
+title: "Profiles and Bundles: Composing dsh Deployments"
+sidebarTitle: "Profiles & Bundles"
+description: "Learn how DeepSeek Harness uses profiles and bundles to compose plugin-tree configurations. Stack layers, create custom profiles, and manage plugins with dsh plugin."
+---
+
+A running `dsh` instance is a plugin tree assembled at boot from an ordered stack of configuration layers. Rather than a single monolithic config file, DeepSeek Harness uses a two-level composition model—**profiles** and **bundles**—that lets each layer build on the one below it while remaining fully patchable by the layers above.
+
+## What is a Profile?
+
+A **profile** is a named composition stored in the Harness home directory. It defines which bundles to stack, holds any out-of-tree plugins the user has installed, and keeps the user's own `cordis.patch.yml` patch layer.
+
+Each profile lives in its own directory:
+
+```
+$DSH_HOME/profiles/<name>/
+```
+
+where `$DSH_HOME` defaults to `~/.dsh`. The profile directory contains two files:
+
+- **`package.json`** — out-of-tree plugin dependencies plus the profile manifest. The manifest's `dsh.profile.bundles` field lists the ordered bundle stack.
+- **`cordis.patch.yml`** — the user's own patch layer, applied after all bundle layers.
+
+Two profiles ship as templates and are auto-initialized on first use:
+
+| Profile | Purpose |
+|---|---|
+| `web` | Boots the browser-based Web UI on `http://127.0.0.1:3080`. |
+| `headless` | Runs a single persisted session, prints the final answer, and exits. |
+
+Any other profile name must be created explicitly using `dsh plugin` (see [Managing Plugins](#managing-plugins)).
+
+## What is a Bundle?
+
+A **bundle** is a distributable package of Cordis plugin configuration rows. It declares itself in its own `package.json` under the `dsh` field:
+
+```json
+{
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
+```
+
+The `dsh.bundle.patch` field points to a patch file that inserts the bundle's plugin rows into whatever composition layer sits below it. Because a bundle contributes rows through the same patch mechanism a user would use, every row it inserts remains overridable by higher layers.
+
+`@deepseek-ai/dsh-base` is the **first layer of every profile**: it brings in model adapters, tools, persistence, sandbox and approval policy, settings, credentials, and telemetry. All other bundles and user patches build on top of it.
+
+## Layer Order
+
+The plugin tree composes over an empty root in a fixed order. Understanding this order tells you exactly which configuration wins when layers conflict:
+
+1. **Bundle layers** — each bundle in `dsh.profile.bundles` order, applied sequentially. Earlier bundles form the base; later bundles can override them.
+2. **Profile patch** — `$DSH_HOME/profiles/<name>/cordis.patch.yml`, the per-profile user overrides.
+3. **Home patch** — `$DSH_HOME/cordis.patch.yml`, applied after the profile patch and therefore outranking it. Changes here affect every profile.
+4. **`--patch` overlays** — per-invocation patches passed on the command line. Applied last, these have the highest precedence but are not saved to the profile.
+
+A patch targets a row by its `id` and replaces that row's entire `config`, or inserts new rows with `insert`. Because a patch replaces the whole config of a matched row, you must restate any fields you want to keep when overriding.
+
+## Shipped Bundles
+
+DeepSeek Harness ships three bundles out of the box:
+
+| Bundle | Purpose |
+|---|---|
+| `@deepseek-ai/dsh-base` | Model adapters, tools, persistence, sandbox, settings, credentials, and telemetry. The first layer of every profile. |
+| `@deepseek-ai/dsh-web-app` | The browser application served at `http://127.0.0.1:3080`. |
+| `@deepseek-ai/dsh-headless` | A one-shot runner with no HTTP server: runs one session and exits. |
+
+The `web` profile stacks `dsh-base` then `dsh-web-app`. The `headless` profile stacks `dsh-base` then `dsh-headless`. Community and enterprise plugins are installed as additional out-of-tree packages in a profile's `node_modules`.
+
+Bundles listed in `dsh.profile.bundles` resolve from the dsh installation first (for the three shipped bundles), then from the profile's own `node_modules` (for out-of-tree plugins installed via `dsh plugin`).
+
+## Managing Plugins
+
+The `dsh plugin` command manages a profile's out-of-tree plugin dependencies by forwarding arguments directly to `pnpm` inside the profile directory:
+
+```sh
+dsh plugin --profile <name> <pnpm args>
+```
+
+For example, to install a community plugin into the `web` profile:
+
+```sh
+dsh plugin --profile web add @my-org/dsh-my-plugin
+```
+
+This installs the package into `$DSH_HOME/profiles/web/node_modules` and updates the profile's `package.json`. You can then reference the plugin by name in the profile's `cordis.patch.yml`.
+
+To create a new profile from scratch (profiles other than `web` and `headless` are not auto-initialized):
+
+```sh
+dsh plugin --profile my-profile add @my-org/dsh-my-bundle
+```
+
+Running `dsh plugin` on a non-existent profile name initializes the profile directory before forwarding the pnpm command.
+
+## Inspect the Composed Tree
+
+To see the full plugin tree your machine would actually boot—without starting any server—run:
+
+```sh
+dsh --profile web --dump-config
+```
+
+This composes all layers offline (bundles → profile patch → home patch → any `--patch` overlays) and prints the resulting YAML. Any row in the output can be targeted by a patch of your own.
+
+<Tip>
+  `--dump-config` shows the tree after applying your current patch files. Use `--dump-default-config` to see the base composition from bundles alone, before any user patches are applied. Comparing the two outputs is the fastest way to verify that your `cordis.patch.yml` has taken effect.
+</Tip>

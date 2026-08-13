@@ -1,0 +1,155 @@
+---
+title: "Use the DeepSeek Harness Web UI"
+sidebarTitle: "Web UI"
+description: "Start the Web UI, configure a model provider, select a workspace, and run your first AI agent session through the browser interface."
+---
+
+The DeepSeek Harness Web UI is a browser-based interface for interacting with `dsh` agents without writing any code. It provides a session composer, a model picker, a workspace browser, and a permission-approval layer — everything you need to run multi-step AI agent tasks against a local project directory.
+
+## Set Up the Web UI
+
+<Steps>
+  <Step title="Install and start the Web UI">
+    Ensure [Node.js](https://nodejs.org) is installed, then run:
+
+    ```sh
+    npx @deepseek-ai/dsh web
+    ```
+
+    The server starts and listens at **http://127.0.0.1:3080** by default. The `dsh` process uses its invoking directory as the default filesystem location, but a fresh Web UI has no selected workspace until you add one.
+  </Step>
+
+  <Step title="Configure a model">
+    Open **Settings → Models**, enter your DeepSeek API key, and save it. The model route becomes usable immediately — no server restart is required.
+
+    The [Configure Model Providers](#configure-model-providers) section below covers additional providers and custom OpenAI-compatible endpoints.
+  </Step>
+
+  <Step title="Choose a workspace">
+    Click **Choose workspace**, add the project directory where you started `dsh`, and select it. The session composer remains unavailable until a workspace is selected.
+  </Step>
+
+  <Step title="Run a task">
+    Start a session and send a prompt such as:
+
+    > Summarize this repository and identify its main packages.
+
+    The agent can read and edit workspace files, run commands, delegate work, and maintain a plan. The Web UI asks before operations that require approval under the active permission policy.
+  </Step>
+</Steps>
+
+<Note>
+  Model changes take effect on the next request without restarting the server. You can update API keys or add new providers at any time while the Web UI is running.
+</Note>
+
+## Configure Model Providers
+
+### DeepSeek
+
+Open **Settings → Models**. The DeepSeek card exposes a single API-key field. Enter your key and save it.
+
+Keys are write-only. After saving, the page shows only a redacted descriptor — never the literal secret. The key is stored in `$DSH_HOME/.credentials.yaml`; your settings file retains only its credential reference.
+
+### Catalog Providers
+
+Click **Add provider** to add a provider from the built-in catalog. Select a provider such as **Anthropic**, **OpenAI**, **Bedrock**, **Vertex**, **Azure**, or **Codex**, enter its credentials, and save.
+
+The installed catalog supplies the endpoint, protocol, and model list automatically. Note that some providers require more than a single API key:
+
+| Provider | Required credential |
+|---|---|
+| Anthropic, OpenAI | API key |
+| AWS Bedrock | AWS credentials and a region |
+| Google Vertex | ADC project |
+| Azure | `api-version` |
+| Codex | OAuth |
+
+Filling only the API-key field is not sufficient to configure Bedrock, Vertex, Azure, or Codex.
+
+### Custom Providers
+
+Click **Add a custom provider** to connect a company gateway, a self-hosted inference server, or any provider absent from the installed catalog. Supply the following fields:
+
+| Field | Description |
+|---|---|
+| Provider ID | A lowercase identifier, permanent once saved |
+| Display name | Human-readable label, editable at any time |
+| Base URL | The endpoint root for API calls |
+| API protocol | The wire protocol (e.g. `openai-completions`) |
+| Credential | API key or credential reference |
+| Models | At least one model entry |
+
+<Warning>
+  The **Provider ID is permanent**. Saved requests, sessions, model defaults, and credential references all embed it. To rename a provider, create a new one with the desired ID and delete the old one. The display name, base URL, protocol, credential, and models remain editable at any time.
+</Warning>
+
+Under **Model catalog**, choose **Fetch available models** to query the base URL and credential currently shown in the form. Selecting candidates updates the draft; the provider is not stored until you explicitly save it.
+
+## Image Input
+
+A model entered by hand is treated as text-only by default, because there is no standard way to ask an arbitrary endpoint which modalities it accepts. Attaching an image to such a model is refused before the request is sent.
+
+To enable image input for a custom provider's model, add an `input` field to the model entry in `$DSH_HOME/settings.yaml`. The custom provider form has no UI field for this — it must be set directly in the YAML file.
+
+**Enable image input for a single model:**
+
+```yaml
+llm-pi-ai:
+  providers:
+    my-gateway:
+      apiKeyEnv: GATEWAY_API_KEY
+      api: openai-completions
+      baseURL: https://gateway.example/v1
+      models:
+        - id: legacy-chat
+        - id: vision-preview
+          input: [text, image]
+```
+
+`input` accepts `text` and `image` and applies to that model alone, so one route can serve both text-only and vision models.
+
+**Set a fallback for all models on a route:**
+
+If every model on a custom provider accepts images, set `defaultInput` once on the route instead of on each individual model:
+
+```yaml
+llm-pi-ai:
+  providers:
+    vision-gateway:
+      apiKeyEnv: GATEWAY_API_KEY
+      api: openai-completions
+      baseURL: https://vision.example/v1
+      defaultInput: [text, image]
+      models:
+        - id: first-model
+        - id: second-model
+```
+
+`defaultInput` is a fallback, not an override. It only applies to models the catalog does not already describe, so it never removes image support from a catalog model that already has it. To restrict a specific catalog model, use `modelOverrides`:
+
+```yaml
+llm-pi-ai:
+  providers:
+    anthropic:
+      modelOverrides:
+        claude-sonnet-4-5:
+          input: [text]
+```
+
+<Note>
+  Both `input` and `defaultInput` state a claim about your endpoint rather than verifying it. If a model declares image support that its endpoint does not actually provide, the provider will reject the request at runtime rather than at configuration time.
+</Note>
+
+## Continue from Source
+
+To run the Web UI from a repository checkout rather than the published npm package:
+
+```sh
+git clone https://github.com/deepseek-ai/deepseek-harness.git
+cd deepseek-harness
+pnpm install
+pnpm run build
+pnpm dsh web
+```
+
+This is useful for developing plugins or contributing to the project. Production runs require built package and frontend artifacts, so `pnpm run build` must be completed before launching.
